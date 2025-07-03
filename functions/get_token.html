@@ -1,0 +1,61 @@
+
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Firebase Token Generator</title>
+</head>
+
+<body>
+    <h1>Firebase Token Generator for Postman</h1>
+    <p>Buka Console (F12) untuk melihat ID Token setelah login.</p>
+
+    <input type="email" id="email" placeholder="Email" /><br /><br />
+    <input type="password" id="password" placeholder="Password" /><br /><br />
+    <button onclick="login()">Login & Get Token</button>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <script>
+        // PENTING: GANTI DENGAN KONFIGURASI PROYEK FIREBASE ANDA
+            const firebaseConfig = {
+                apiKey: "AIzaSyDVVeMGMkssW-cp3QcqI4AoAWIw-Qk33uk",
+                authDomain: "home-workers-fa5cd.firebaseapp.com",
+                projectId: "home-workers-fa5cd",
+                storageBucket: "home-workers-fa5cd.firebasestorage.app",
+                messagingSenderId: "891691718664",
+                appId: "1:891691718664:web:e5393af87d606f751459bd",
+                measurementId: "G-6ZKT5L630T"
+            };
+
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            auth.signInWithEmailAndPassword(email, password)
+                .then((userCredential) => {
+                    // Login berhasil
+                    console.log('Login berhasil untuk:', userCredential.user.email);
+                    userCredential.user.getIdToken().then((token) => {
+                        console.log('--- COPY TOKEN DI BAWAH INI ---');
+                        console.log(token);
+                        console.log('--- SELESAI ---');
+                        alert('Token sudah di-print di Console (F12).');
+                    });
+                })
+                .catch((error) => {
+                    console.error('Login Gagal:', error);
+                    alert('Login Gagal: ' + error.message);
+                });
+        }
+    </script>
+</body>
+
+</html>

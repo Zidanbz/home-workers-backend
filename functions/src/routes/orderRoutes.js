@@ -1,0 +1,41 @@
+const express = require('express');
+const router = express.Router();
+const {
+    createOrder,
+    getMyOrders,
+    acceptOrder,
+    cancelOrder,
+    completeOrder,
+    getOrderById,
+    proposeQuote,
+    respondToQuote
+} = require('../controllers/orderController');
+const { authMiddleware } = require('../middlewares/authMiddleware');
+
+
+// Semua rute di sini memerlukan login, jadi kita gunakan middleware di semua
+router.use(authMiddleware);
+
+// Customer membuat pesanan baru
+router.post('/', createOrder);
+
+// Pengguna mengambil daftar pesanannya
+router.get('/my-orders', getMyOrders);
+
+// Worker menerima sebuah pesanan
+router.put('/:orderId/accept', acceptOrder);
+
+// Worker menandai order selesai
+router.put('/:orderId/complete', completeOrder);
+
+// Customer membatalkan order
+router.put('/:orderId/cancel', cancelOrder);
+
+router.get('/:orderId', getOrderById);
+
+// Endpoint untuk worker mengajukan penawaran harga
+router.post('/:orderId/quote', authMiddleware, proposeQuote);
+
+// Endpoint untuk customer merespons penawaran harga
+router.put('/:orderId/quote/respond', authMiddleware, respondToQuote);
+module.exports = router;

@@ -1,0 +1,20 @@
+const express = require('express');
+const router = express.Router();
+const { authMiddleware } = require('../middlewares/authMiddleware');
+const { addAddress, getAddresses, updateAvatar, uploadDocuments, updateMyProfile } = require('../controllers/userController');
+
+// Endpoint untuk update avatar. Harus login.
+router.post('/me/avatar', authMiddleware, updateAvatar);
+// Endpoint untuk menambah alamat baru.
+router.post('/me/addresses', authMiddleware, addAddress);
+
+// Endpoint untuk mengambil daftar alamat.
+router.get('/me/addresses', authMiddleware, getAddresses);
+
+// Endpoint untuk worker mengunggah dokumen.
+router.post('/me/documents', authMiddleware, uploadDocuments);
+
+// Endpoint untuk memperbarui profil umum pengguna
+router.put('/me', authMiddleware, updateMyProfile);
+
+module.exports = router;
