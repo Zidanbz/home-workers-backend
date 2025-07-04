@@ -269,6 +269,42 @@ const updateService = async (req, res) => {
     }
 };
 
+/**
+ * DELETE /api/services/:serviceId
+ * Worker menghapus layanannya sendiri.
+ */
+const deleteService = async (req, res) => {
+    const { uid: workerId, role } = req.user;
+    const { serviceId } = req.params;
+
+    if (role !== 'WORKER') {
+        return res.status(403).json({ message: 'Forbidden: Only workers can delete services.' });
+    }
+
+    try {
+        const serviceRef = db.collection('services').doc(serviceId);
+        const serviceDoc = await serviceRef.get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ message: 'Service not found.' });
+        }
+
+        // Security Check: Pastikan yang menghapus adalah pemilik layanan
+        if (serviceDoc.data().workerId !== workerId) {
+            return res.status(403).json({ message: 'Forbidden: You are not the owner of this service.' });
+        }
+
+        // Hapus dokumen layanan dari Firestore
+        await serviceRef.delete();
+
+        // TODO (Untuk Masa Depan): Tambahkan logika untuk menghapus foto-foto terkait
+        // dari Firebase Cloud Storage untuk menghemat ruang penyimpanan.
+
+        res.status(200).json({ message: 'Service deleted successfully.' });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to delete service', error: error.message });
+    }
+};
 
 module.exports = {
     createService,
@@ -277,4 +313,5 @@ module.exports = {
     getServiceById,
     addPhotoToService,
     updateService,
+    deleteService,
 };

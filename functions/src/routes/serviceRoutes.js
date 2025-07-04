@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createService, getAllApprovedServices, getMyServices, getServiceById, addPhotoToService, updateService} = require('../controllers/serviceController');
+const { createService, getAllApprovedServices, getMyServices, getServiceById, addPhotoToService, updateService, deleteService} = require('../controllers/serviceController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
 
@@ -23,4 +23,6 @@ router.post('/:serviceId/photos', authMiddleware, addPhotoToService);
 // Endpoint untuk worker memperbarui layanannya
 router.put('/:serviceId', authMiddleware, updateService);
 
+// Endpoint untuk worker menghapus layanannya
+router.delete('/:serviceId', authMiddleware, deleteService);
 module.exports = router;
