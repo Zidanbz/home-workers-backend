@@ -1,2 +1,5 @@
 node_modules/
 *.local
+
+# Service account credentials
+functions/serviceAccountKey.json
