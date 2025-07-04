@@ -117,25 +117,48 @@ const completeOrder = async (req, res) => {
     const { uid: workerId } = req.user;
     const { orderId } = req.params;
 
+    const orderRef = db.collection('orders').doc(orderId);
+    const walletRef = db.collection('wallets').doc(workerId);
+
     try {
-        const orderDocRef = db.collection('orders').doc(orderId);
-        const doc = await orderDocRef.get();
+        await db.runTransaction(async (transaction) => {
+            const orderDoc = await transaction.get(orderRef);
+            if (!orderDoc.exists) throw new Error('Order not found.');
 
-        if (!doc.exists) {
-            return res.status(404).json({ message: 'Order not found.' });
-        }
+            const orderData = orderDoc.data();
+            if (orderData.workerId !== workerId) throw new Error('Forbidden: You are not assigned to this order.');
+            if (orderData.status !== 'work_in_progress') throw new Error(`Cannot complete order with status: ${orderData.status}`);
+            
+            const finalPrice = orderData.finalPrice || orderData.harga || 0;
+            if (finalPrice <= 0) throw new Error('Order has no price and cannot be completed.');
 
-        // Security Check: Hanya worker yang ditugaskan yang bisa menyelesaikan order
-        if (doc.data().workerId !== workerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not assigned to this order.' });
-        }
+            // --- LOGIKA BARU DIMULAI DI SINI ---
+            
+            // 1. Tambah saldo worker
+            transaction.set(walletRef, { 
+                currentBalance: admin.firestore.FieldValue.increment(finalPrice) 
+            }, { merge: true });
 
-        await orderDocRef.update({ status: 'completed' });
-        res.status(200).json({ message: 'Order marked as completed' });
+            // 2. Buat catatan transaksi pemasukan (cash-in)
+            const newTransactionRef = walletRef.collection('transactions').doc();
+            transaction.set(newTransactionRef, {
+                type: 'cash-in',
+                amount: finalPrice,
+                description: `From order #${orderId.substring(0, 6)}`,
+                status: 'confirmed',
+                timestamp: new Date(),
+            });
+
+            // 3. Update status order menjadi 'completed'
+            transaction.update(orderRef, { status: 'completed' });
+        });
+
+        res.status(200).json({ message: 'Order marked as completed and payment processed.' });
     } catch (error) {
-        res.status(500).json({ message: 'Failed to complete order', error: error.message });
+        res.status(500).json({ message: error.message || 'Failed to complete order.' });
     }
 };
+
 
 /**
  * PUT /api/orders/:orderId/cancel

@@ -5,7 +5,8 @@ const router = express.Router();
 const {
     getPendingServices,
     approveService,
-    rejectService
+    rejectService,
+    sendBroadcast
 } = require('../controllers/adminController');
 
 // Impor kedua middleware
@@ -23,6 +24,9 @@ router.put('/services/:serviceId/approve', approveService);
 
 // Rute untuk menolak layanan
 router.put('/services/:serviceId/reject', rejectService);
+
+// Endpoint untuk admin mengirim pesan broadcast
+router.post('/broadcast', sendBroadcast);
 
 
 module.exports = router;

@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { createReview } = require('../controllers/reviewController');
+const { createReview, getReviewsForWorker } = require('../controllers/reviewController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
 
@@ -10,5 +10,8 @@ const { authMiddleware } = require('../middlewares/authMiddleware');
 // Endpoint untuk customer membuat review pada sebuah order
 // Rute ini dilindungi, hanya user yang login (customer) yang bisa mengakses
 router.post('/orders/:orderId/review', authMiddleware, createReview);
+
+// Endpoint untuk worker mengambil review miliknya
+router.get('/for-worker/me', authMiddleware, getReviewsForWorker);
 
 module.exports = router;

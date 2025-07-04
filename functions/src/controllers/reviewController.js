@@ -85,6 +85,55 @@ const createReview = async (req, res) => {
     }
 };
 
+/**
+ * GET /api/reviews/for-worker/me
+ * Mengambil semua review untuk worker yang sedang login.
+ */
+const getReviewsForWorker = async (req, res) => {
+    const { uid: workerId, role } = req.user;
+
+    if (role !== 'WORKER') {
+        return res.status(403).json({ message: 'Forbidden: Only workers can view their reviews.' });
+    }
+
+    try {
+        // Ambil semua review yang ditujukan untuk worker ini
+        const reviewsQuery = db.collection('reviews').where('workerId', '==', workerId).orderBy('createdAt', 'desc');
+        const snapshot = await reviewsQuery.get();
+
+        if (snapshot.empty) {
+            return res.status(200).json([]);
+        }
+
+        // "Perkaya" data review dengan informasi customer
+        const promises = snapshot.docs.map(async (doc) => {
+            const reviewData = doc.data();
+            const customerId = reviewData.customerId;
+
+            const customerDoc = await db.collection('users').doc(customerId).get();
+            
+            return {
+                id: doc.id,
+                ...reviewData,
+                customerInfo: customerDoc.exists ? {
+                    nama: customerDoc.data().nama,
+                    avatarUrl: customerDoc.data().avatarUrl || '',
+                } : {
+                    nama: 'Pengguna Anonim',
+                    avatarUrl: '',
+                }
+            };
+        });
+
+        const populatedReviews = await Promise.all(promises);
+        res.status(200).json(populatedReviews);
+
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to get reviews', error: error.message });
+    }
+};
+
 module.exports = {
     createReview,
+    getReviewsForWorker,
 };

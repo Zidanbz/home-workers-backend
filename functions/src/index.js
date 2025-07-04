@@ -26,6 +26,7 @@ const serviceRoutes = require('./routes/serviceRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const userRoutes = require('./routes/userRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const walletRoutes = require('./routes/walletRoutes');
 //...
 app.use('/api/auth', authRoutes);
 app.use('/api/workers', workerRoutes);
@@ -35,6 +36,7 @@ app.use('/api/services', serviceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes); 
 app.use('/api/chats', chatRoutes);
+app.use('/api/wallet', walletRoutes);
 
 // Test Route
 app.get('/api', (req, res) => {

@@ -92,55 +92,59 @@ const registerCustomer = async (req, res) => {
     }
   };
 
+/**
+ * Login untuk semua jenis pengguna.
+ * Sekarang mengembalikan Custom Token, bukan ID Token.
+ */
 const loginUser = async (req, res) => {
-    const { email, password } = req.body;
-  
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required.' });
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required.' });
+  }
+
+  const firebaseAuthUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.APP_FIREBASE_WEB_API_KEY}`;
+
+  try {
+    // Langkah 1: Verifikasi kredensial pengguna dan dapatkan UID
+    const firebaseResponse = await axios.post(firebaseAuthUrl, {
+      email: email,
+      password: password,
+      returnSecureToken: true
+    });
+
+    const { localId: uid } = firebaseResponse.data;
+
+    // --- PERUBAHAN UTAMA ---
+    // Langkah 2: Buat Custom Token menggunakan Admin SDK
+    const customToken = await admin.auth().createCustomToken(uid);
+
+    // Langkah 3: Ambil data profil dari Firestore (tidak berubah)
+    const userDocRef = db.collection('users').doc(uid);
+    const userDoc = await userDocRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User data not found in our database.' });
     }
-  
-    // URL untuk Firebase Auth REST API
-    const firebaseAuthUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.APP_FIREBASE_WEB_API_KEY}`;
-  
-    try {
-      // Langkah 1: Kirim kredensial ke Firebase Auth REST API
-      const firebaseResponse = await axios.post(firebaseAuthUrl, {
-        email: email,
-        password: password,
-        returnSecureToken: true
-      });
-  
-      const { idToken, localId: uid } = firebaseResponse.data;
-  
-      // Langkah 2: Ambil data profil dari database Firestore kita
-      const userDocRef = db.collection('users').doc(uid);
-      const userDoc = await userDocRef.get();
-  
-      if (!userDoc.exists) {
-        // Seharusnya tidak terjadi jika registrasi benar, tapi ini untuk keamanan
-        return res.status(404).json({ message: 'User data not found in our database.' });
+    const userData = userDoc.data();
+
+    // Langkah 4: Kirim Custom Token dan data user ke client
+    res.status(200).json({
+      message: 'Login successful',
+      customToken: customToken, // <-- Kirim custom token, bukan idToken
+      user: {
+        uid: uid,
+        email: userData.email,
+        nama: userData.nama,
+        role: userData.role
       }
-  
-      const userData = userDoc.data();
-  
-      // Langkah 3: Kirim respons gabungan ke client
-      res.status(200).json({
-        message: 'Login successful',
-        token: idToken, // Kirim token untuk request selanjutnya
-        user: {
-          uid: uid,
-          email: userData.email,
-          nama: userData.nama,
-          role: userData.role
-        }
-      });
-  
-    } catch (error) {
-      // Tangani error dari Firebase, misal: password salah
-      const errorMessage = error.response?.data?.error?.message || 'Invalid credentials';
-      res.status(401).json({ message: errorMessage });
-    }
-  };
+    });
+
+  } catch (error) {
+    const errorMessage = error.response?.data?.error?.message || 'Invalid credentials';
+    res.status(401).json({ message: errorMessage });
+  }
+};
   
   const getMyProfile = async (req, res) => {
     const { uid } = req.user; // UID didapat dari authMiddleware

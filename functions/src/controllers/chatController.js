@@ -52,6 +52,10 @@ const createChat = async (req, res) => {
             },
             lastMessage: null,
             lastMessageTimestamp: null,
+            unreadCount: {
+                [senderId]: 0,
+                [recipientId]: 0,
+            },
             createdAt: new Date(),
         };
 
@@ -102,7 +106,7 @@ const sendMessage = async (req, res) => {
     try {
         const chatRef = db.collection('chats').doc(chatId);
         const messagesRef = chatRef.collection('messages');
-        const timestamp = new Date();
+        // const timestamp = new Date();
 
         // Operasi 1 & 2: Simpan pesan dan update chat (tidak berubah)
         await messagesRef.add({ senderId, text, timestamp });
@@ -117,12 +121,13 @@ const sendMessage = async (req, res) => {
         
         // Cari ID penerima
         const recipientId = members.find(id => id !== senderId);
+        const unreadCountUpdate = {};
 
         if (recipientId) {
             // Ambil token perangkat penerima dari profil user mereka
             const recipientUserDoc = await db.collection('users').doc(recipientId).get();
             const fcmToken = recipientUserDoc.data().fcmToken;
-
+            unreadCountUpdate[`unreadCount.${recipientId}`] = admin.firestore.FieldValue.increment(1);
             if (fcmToken) {
                 // Buat payload notifikasi
                 const payload = {
@@ -141,7 +146,17 @@ const sendMessage = async (req, res) => {
                 await admin.messaging().send(payload);
                 console.log('Notifikasi berhasil dikirim ke:', recipientId);
             }
+
+
         }
+        const timestamp = new Date();
+        await db.collection('chats').doc(chatId).collection('messages').add({ senderId, text, timestamp });
+        await chatRef.update({ 
+            lastMessage: text, 
+            lastMessageTimestamp: timestamp,
+            ...unreadCountUpdate // Tambahkan update unread count
+        });
+
         // --- AKHIR LANGKAH BARU ---
 
         res.status(201).json({ message: 'Message sent successfully' });
@@ -173,9 +188,32 @@ const getMessages = async (req, res) => {
     }
 };
 
+/**
+ * POST /api/chats/:chatId/read
+ * Mereset unread count untuk pengguna yang sedang login.
+ */
+const markChatAsRead = async (req, res) => {
+    const { uid: currentUserId } = req.user;
+    const { chatId } = req.params;
+
+    try {
+        const chatRef = db.collection('chats').doc(chatId);
+        
+        // Update field unread count untuk user ini menjadi 0
+        await chatRef.update({
+            [`unreadCount.${currentUserId}`]: 0
+        });
+
+        res.status(200).json({ message: 'Chat marked as read.' });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to mark chat as read', error: error.message });
+    }
+};
+
 module.exports = {
     createChat,
     getMyChats,
     sendMessage,
     getMessages,
+    markChatAsRead,
 };

@@ -3,7 +3,7 @@ const db = admin.firestore();
 
 /**
  * POST /api/services
- * Worker membuat daftar layanan baru dengan detail lengkap.
+ * Worker membuat daftar layanan baru dengan detail paling lengkap.
  */
 const createService = async (req, res) => {
     const { uid: workerId, role } = req.user;
@@ -12,7 +12,7 @@ const createService = async (req, res) => {
         tipeLayanan, // 'fixed' atau 'survey'
         harga, // Harga untuk tipe 'fixed'
         biayaSurvei, // Biaya untuk tipe 'survey'
-        metodePembayaran, fotoUtamaUrl 
+        metodePembayaran, fotoUtamaUrl, photoUrls
     } = req.body;
 
     if (role !== 'WORKER') {
@@ -23,7 +23,7 @@ const createService = async (req, res) => {
         return res.status(400).json({ message: 'Nama layanan, kategori, dan tipe layanan wajib diisi.' });
     }
 
-    // Siapkan data untuk disimpan
+    // Siapkan data dasar untuk disimpan
     const serviceData = {
         workerId: workerId,
         namaLayanan: namaLayanan,
@@ -33,8 +33,8 @@ const createService = async (req, res) => {
         metodePembayaran: Array.isArray(metodePembayaran) && metodePembayaran.length > 0 
             ? metodePembayaran 
             : ["Cash", "Cashless"],
-        fotoUtamaUrl: fotoUtamaUrl || '',
-        photoUrls: [],
+        fotoUtamaUrl: fotoUtamaUrl || (photoUrls && photoUrls.length > 0 ? photoUrls[0] : ''),
+        photoUrls: photoUrls || [],
         statusPersetujuan: 'pending',
         dibuatPada: new Date(),
     };
@@ -50,7 +50,7 @@ const createService = async (req, res) => {
     }
 
     try {
-        const newService = await db.collection('services').add(serviceData);
+        const newService = await db.collection('service').add(serviceData);
         res.status(201).json({ message: 'Service created successfully and is awaiting approval.', serviceId: newService.id });
     } catch (error) {
         res.status(500).json({ message: 'Failed to create service.', error: error.message });
@@ -139,7 +139,7 @@ const getMyServices = async (req, res) => {
 const getServiceById = async (req, res) => {
     try {
         const { serviceId } = req.params;
-        const serviceRef = db.collection('services').doc(serviceId);
+        const serviceRef = db.collection('service').doc(serviceId);
         const serviceDoc = await serviceRef.get();
 
         if (!serviceDoc.exists) {
@@ -194,7 +194,7 @@ const addPhotoToService = async (req, res) => {
     }
 
     try {
-        const serviceRef = db.collection('services').doc(serviceId);
+        const serviceRef = db.collection('service').doc(serviceId);
         const serviceDoc = await serviceRef.get();
 
         if (!serviceDoc.exists) {
@@ -228,7 +228,7 @@ const updateService = async (req, res) => {
     const { namaLayanan, deskripsiLayanan, harga, category, metodePembayaran, fotoUtamaUrl, tipeLayanan, biayaSurvei } = req.body;
 
     try {
-        const serviceRef = db.collection('services').doc(serviceId);
+        const serviceRef = db.collection('service').doc(serviceId);
         const serviceDoc = await serviceRef.get();
 
         if (!serviceDoc.exists) {
@@ -256,6 +256,12 @@ const updateService = async (req, res) => {
                 dataToUpdate.biayaSurvei = Number(biayaSurvei);
                 dataToUpdate.harga = admin.firestore.FieldValue.delete(); // Hapus harga jika ada
             }
+        } else if (harga !== undefined) {
+            // Jika tipe tidak diubah, tapi harga diubah (untuk layanan fixed)
+            dataToUpdate.harga = Number(harga);
+        } else if (biayaSurvei !== undefined) {
+            // Jika tipe tidak diubah, tapi biaya survei diubah (untuk layanan survey)
+            dataToUpdate.biayaSurvei = Number(biayaSurvei);
         }
 
         if (Object.keys(dataToUpdate).length === 0) {
@@ -268,6 +274,7 @@ const updateService = async (req, res) => {
         res.status(500).json({ message: 'Failed to update service', error: error.message });
     }
 };
+
 
 /**
  * DELETE /api/services/:serviceId
@@ -282,7 +289,7 @@ const deleteService = async (req, res) => {
     }
 
     try {
-        const serviceRef = db.collection('services').doc(serviceId);
+        const serviceRef = db.collection('service').doc(serviceId);
         const serviceDoc = await serviceRef.get();
 
         if (!serviceDoc.exists) {
