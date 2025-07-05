@@ -1,44 +1,37 @@
 const admin = require('firebase-admin');
 const db = admin.firestore();
+const { sendSuccess, sendError } = require('../utils/responseHelper');
 
 // POST /api/orders
 // Customer membuat pesanan baru
-/**
- * POST /api/orders
- * Customer membuat pesanan baru berdasarkan sebuah Service ID.
- * MODIFIED VERSION
- */
 const createOrder = async (req, res) => {
     const { uid: customerId } = req.user;
     const { serviceId, jadwalPerbaikan, catatan } = req.body;
 
-    // --- INI BAGIAN YANG DIPERBAIKI ---
-    // Sekarang memeriksa serviceId, bukan workerId lagi.
     if (!serviceId || !jadwalPerbaikan) {
-        return res.status(400).json({ message: 'Service ID and schedule date are required.' });
+        return sendError(res, 400, 'Service ID and schedule date are required.');
     }
-    // ------------------------------------
 
     try {
         const serviceRef = db.collection('service').doc(serviceId);
         const serviceDoc = await serviceRef.get();
 
         if (!serviceDoc.exists) {
-            return res.status(404).json({ message: 'Service not found.' });
+            return sendError(res, 404, 'Service not found.');
         }
 
         const serviceData = serviceDoc.data();
         if (serviceData.statusPersetujuan !== 'approved') {
-            return res.status(403).json({ message: 'This service is not available for booking.' });
+            return sendError(res, 403, 'This service is not available for booking.');
         }
 
         const { workerId, harga } = serviceData;
 
         const newOrder = await db.collection('orders').add({
-            customerId: customerId,
-            workerId: workerId,
-            serviceId: serviceId,
-            harga: harga,
+            customerId,
+            workerId,
+            serviceId,
+            harga,
             status: 'pending',
             jadwalPerbaikan: new Date(jadwalPerbaikan),
             catatan: catatan || '',
@@ -46,70 +39,53 @@ const createOrder = async (req, res) => {
             hasBeenReviewed: false,
         });
 
-        res.status(201).json({ message: 'Order created successfully', orderId: newOrder.id });
+        return sendSuccess(res, 201, 'Order created successfully', { orderId: newOrder.id });
     } catch (error) {
-        res.status(500).json({ message: 'Failed to create order', error: error.message });
+        return sendError(res, 500, 'Failed to create order: ' + error.message);
     }
 };
 
-/**
- * GET /api/orders/my-orders
- * Mengambil daftar order milik pengguna (sebagai customer atau worker).
- */
 const getMyOrders = async (req, res) => {
     const { uid } = req.user;
 
     try {
-        // Ambil pesanan di mana saya adalah customer
         const customerOrdersQuery = db.collection('orders').where('customerId', '==', uid);
         const customerOrdersSnapshot = await customerOrdersQuery.get();
         const customerOrdersPromises = customerOrdersSnapshot.docs.map(enrichOrderData);
         const customerOrders = await Promise.all(customerOrdersPromises);
 
-        // Ambil pesanan di mana saya adalah worker
         const workerOrdersQuery = db.collection('orders').where('workerId', '==', uid);
         const workerOrdersSnapshot = await workerOrdersQuery.get();
         const workerOrdersPromises = workerOrdersSnapshot.docs.map(enrichOrderData);
         const workerOrders = await Promise.all(workerOrdersPromises);
 
-        res.status(200).json({ asCustomer: customerOrders, asWorker: workerOrders });
+        return sendSuccess(res, 200, 'Orders fetched successfully', {
+            asCustomer: customerOrders,
+            asWorker: workerOrders
+        });
     } catch (error) {
-        console.error("Error fetching my orders:", error);
-        res.status(500).json({ message: 'Failed to get orders', error: error.message });
+        return sendError(res, 500, 'Failed to get orders: ' + error.message);
     }
 };
 
-// PUT /api/orders/:orderId/accept
-// Worker menerima sebuah order
 const acceptOrder = async (req, res) => {
     const { uid: workerId } = req.user;
-    const { orderId } = req.params; // Mengambil ID order dari URL
+    const { orderId } = req.params;
 
     try {
         const orderDocRef = db.collection('orders').doc(orderId);
         const doc = await orderDocRef.get();
 
-        if (!doc.exists) {
-            return res.status(404).json({ message: 'Order not found.' });
-        }
+        if (!doc.exists) return sendError(res, 404, 'Order not found.');
 
         const orderData = doc.data();
-        
-        // Security Check: Pastikan yang mau accept adalah worker yang ditugaskan
-        if (orderData.workerId !== workerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not assigned to this order.' });
-        }
-        
-        // Cek apakah statusnya masih 'pending'
-        if (orderData.status !== 'pending') {
-            return res.status(409).json({ message: `Cannot accept order with status: ${orderData.status}` });
-        }
+        if (orderData.workerId !== workerId) return sendError(res, 403, 'Forbidden: You are not assigned to this order.');
+        if (orderData.status !== 'pending') return sendError(res, 409, `Cannot accept order with status: ${orderData.status}`);
 
         await orderDocRef.update({ status: 'accepted' });
-
-        res.status(200).json({ message: 'Order accepted successfully' });
+        return sendSuccess(res, 200, 'Order accepted successfully');
     } catch (error) {
-        res.status(500).json({ message: 'Failed to accept order', error: error.message });
+        return sendError(res, 500, 'Failed to accept order: ' + error.message);
     }
 };
 
@@ -128,18 +104,12 @@ const completeOrder = async (req, res) => {
             const orderData = orderDoc.data();
             if (orderData.workerId !== workerId) throw new Error('Forbidden: You are not assigned to this order.');
             if (orderData.status !== 'work_in_progress') throw new Error(`Cannot complete order with status: ${orderData.status}`);
-            
+
             const finalPrice = orderData.finalPrice || orderData.harga || 0;
             if (finalPrice <= 0) throw new Error('Order has no price and cannot be completed.');
 
-            // --- LOGIKA BARU DIMULAI DI SINI ---
-            
-            // 1. Tambah saldo worker
-            transaction.set(walletRef, { 
-                currentBalance: admin.firestore.FieldValue.increment(finalPrice) 
-            }, { merge: true });
+            transaction.set(walletRef, { currentBalance: admin.firestore.FieldValue.increment(finalPrice) }, { merge: true });
 
-            // 2. Buat catatan transaksi pemasukan (cash-in)
             const newTransactionRef = walletRef.collection('transactions').doc();
             transaction.set(newTransactionRef, {
                 type: 'cash-in',
@@ -149,21 +119,15 @@ const completeOrder = async (req, res) => {
                 timestamp: new Date(),
             });
 
-            // 3. Update status order menjadi 'completed'
             transaction.update(orderRef, { status: 'completed' });
         });
 
-        res.status(200).json({ message: 'Order marked as completed and payment processed.' });
+        return sendSuccess(res, 200, 'Order marked as completed and payment processed.');
     } catch (error) {
-        res.status(500).json({ message: error.message || 'Failed to complete order.' });
+        return sendError(res, 500, error.message);
     }
 };
 
-
-/**
- * PUT /api/orders/:orderId/cancel
- * Customer membatalkan sebuah order.
- */
 const cancelOrder = async (req, res) => {
     const { uid: customerId } = req.user;
     const { orderId } = req.params;
@@ -172,24 +136,14 @@ const cancelOrder = async (req, res) => {
         const orderDocRef = db.collection('orders').doc(orderId);
         const doc = await orderDocRef.get();
 
-        if (!doc.exists) {
-            return res.status(404).json({ message: 'Order not found.' });
-        }
-
-        // Security Check: Hanya customer pembuat order yang bisa membatalkan
-        if (doc.data().customerId !== customerId) {
-            return res.status(403).json({ message: 'Forbidden: You did not create this order.' });
-        }
-        
-        // Aturan bisnis: Order hanya bisa dibatalkan jika statusnya masih 'pending' atau 'accepted'
-        if (!['pending', 'accepted'].includes(doc.data().status)) {
-            return res.status(409).json({ message: 'Order cannot be cancelled at its current state.' });
-        }
+        if (!doc.exists) return sendError(res, 404, 'Order not found.');
+        if (doc.data().customerId !== customerId) return sendError(res, 403, 'Forbidden: You did not create this order.');
+        if (!['pending', 'accepted'].includes(doc.data().status)) return sendError(res, 409, 'Order cannot be cancelled at its current state.');
 
         await orderDocRef.update({ status: 'cancelled' });
-        res.status(200).json({ message: 'Order has been cancelled' });
+        return sendSuccess(res, 200, 'Order has been cancelled');
     } catch (error) {
-        res.status(500).json({ message: 'Failed to cancel order', error: error.message });
+        return sendError(res, 500, 'Failed to cancel order: ' + error.message);
     }
 };
 
@@ -200,93 +154,59 @@ const getOrderById = async (req, res) => {
     try {
         const orderDoc = await db.collection('orders').doc(orderId).get();
 
-        if (!orderDoc.exists) {
-            return res.status(404).json({ message: 'Order not found.' });
-        }
+        if (!orderDoc.exists) return sendError(res, 404, 'Order not found.');
 
         const orderData = orderDoc.data();
+        if (orderData.customerId !== uid && orderData.workerId !== uid) return sendError(res, 403, 'Forbidden: You are not part of this order.');
 
-        // Security Check: Pastikan yang mengakses adalah customer atau worker dari order tsb
-        if (orderData.customerId !== uid && orderData.workerId !== uid) {
-            return res.status(403).json({ message: 'Forbidden: You are not part of this order.' });
-        }
-
-        res.status(200).json({ id: orderDoc.id, ...orderData });
+        return sendSuccess(res, 200, 'Order fetched successfully', { id: orderDoc.id, ...orderData });
     } catch (error) {
-        res.status(500).json({ message: 'Failed to get order details', error: error.message });
+        return sendError(res, 500, 'Failed to get order details: ' + error.message);
     }
 };
 
-/**
- * Helper function untuk "memperkaya" data order dengan info tambahan.
- * @param {FirebaseFirestore.DocumentSnapshot} orderDoc Dokumen order.
- * @returns {Promise<object>} Objek order yang sudah lengkap.
- */
 async function enrichOrderData(orderDoc) {
     const orderData = orderDoc.data();
     const { customerId, workerId, serviceId } = orderData;
 
-    // Ambil dokumen terkait secara paralel untuk efisiensi
     const [customerDoc, serviceDoc] = await Promise.all([
         db.collection('users').doc(customerId).get(),
-        // Hanya ambil service jika serviceId ada
         serviceId ? db.collection('service').doc(serviceId).get() : Promise.resolve(null)
     ]);
 
-    // Ambil alamat dari subcollection customer
     const addressSnapshot = await db.collection('users').doc(customerId).collection('addresses').limit(1).get();
     const customerAddress = addressSnapshot.empty ? 'Alamat belum diatur' : addressSnapshot.docs[0].data().fullAddress;
 
     return {
         id: orderDoc.id,
         ...orderData,
-        // Gabungkan info yang dibutuhkan oleh frontend
-        customerInfo: customerDoc.exists ? { 
+        customerInfo: customerDoc.exists ? {
             nama: customerDoc.data().nama,
             alamat: customerAddress,
         } : {},
-        serviceInfo: serviceDoc && serviceDoc.exists ? { 
-            namaLayanan: serviceDoc.data().namaLayanan 
+        serviceInfo: serviceDoc && serviceDoc.exists ? {
+            namaLayanan: serviceDoc.data().namaLayanan
         } : {
-            namaLayanan: 'Layanan Langsung' // Fallback jika tidak ada serviceId
+            namaLayanan: 'Layanan Langsung'
         }
     };
 }
 
-/**
- * POST /api/orders/:orderId/quote
- * Worker mengajukan penawaran harga untuk sebuah order survei.
- */
 const proposeQuote = async (req, res) => {
     const { uid: workerId, role } = req.user;
     const { orderId } = req.params;
     const { price } = req.body;
 
-    if (role !== 'WORKER') {
-        return res.status(403).json({ message: 'Forbidden: Only workers can propose a quote.' });
-    }
-
-    if (typeof price !== 'number' || price <= 0) {
-        return res.status(400).json({ message: 'A valid price is required.' });
-    }
+    if (role !== 'WORKER') return sendError(res, 403, 'Only workers can propose a quote.');
+    if (typeof price !== 'number' || price <= 0) return sendError(res, 400, 'A valid price is required.');
 
     try {
         const orderRef = db.collection('orders').doc(orderId);
         const orderDoc = await orderRef.get();
 
-        if (!orderDoc.exists) {
-            return res.status(404).json({ message: 'Order not found.' });
-        }
-
-        const orderData = orderDoc.data();
-
-        if (orderData.workerId !== workerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not assigned to this order.' });
-        }
-
-        if (orderData.status !== 'accepted') {
-            return res.status(409).json({ message: `Cannot propose a quote for an order with status '${orderData.status}'.` });
-        }
+        if (!orderDoc.exists) return sendError(res, 404, 'Order not found.');
+        if (orderDoc.data().workerId !== workerId) return sendError(res, 403, 'Forbidden: You are not assigned to this order.');
+        if (orderDoc.data().status !== 'accepted') return sendError(res, 409, `Cannot propose a quote for an order with status '${orderDoc.data().status}'.`);
 
         await orderRef.update({
             quotedPrice: price,
@@ -294,75 +214,44 @@ const proposeQuote = async (req, res) => {
             quoteProposedAt: new Date(),
         });
 
-        res.status(200).json({ message: 'Quote proposed successfully.' });
-
+        return sendSuccess(res, 200, 'Quote proposed successfully.');
     } catch (error) {
-        res.status(500).json({ message: 'Failed to propose quote', error: error.message });
+        return sendError(res, 500, 'Failed to propose quote: ' + error.message);
     }
 };
 
-
-// --- FUNGSI BARU DIMULAI DI SINI ---
-
-/**
- * PUT /api/orders/:orderId/quote/respond
- * Customer menyetujui atau menolak penawaran harga dari worker.
- */
 const respondToQuote = async (req, res) => {
     const { uid: customerId, role } = req.user;
     const { orderId } = req.params;
-    const { decision } = req.body; // 'accept' atau 'reject'
+    const { decision } = req.body;
 
-    if (role !== 'CUSTOMER') {
-        return res.status(403).json({ message: 'Forbidden: Only customers can respond to a quote.' });
-    }
-
-    if (!decision || !['accept', 'reject'].includes(decision)) {
-        return res.status(400).json({ message: "A valid decision ('accept' or 'reject') is required." });
-    }
+    if (role !== 'CUSTOMER') return sendError(res, 403, 'Only customers can respond to a quote.');
+    if (!decision || !['accept', 'reject'].includes(decision)) return sendError(res, 400, "A valid decision ('accept' or 'reject') is required.");
 
     try {
         const orderRef = db.collection('orders').doc(orderId);
         const orderDoc = await orderRef.get();
 
-        if (!orderDoc.exists) {
-            return res.status(404).json({ message: 'Order not found.' });
-        }
-
+        if (!orderDoc.exists) return sendError(res, 404, 'Order not found.');
         const orderData = orderDoc.data();
 
-        if (orderData.customerId !== customerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not the customer for this order.' });
-        }
+        if (orderData.customerId !== customerId) return sendError(res, 403, 'You are not the customer for this order.');
+        if (orderData.status !== 'quote_proposed') return sendError(res, 409, `Cannot respond to quote with status '${orderData.status}'.`);
 
-        if (orderData.status !== 'quote_proposed') {
-            return res.status(409).json({ message: `Cannot respond to a quote for an order with status '${orderData.status}'.` });
-        }
-
-        let newStatus = '';
-        const dataToUpdate = {};
-
-        if (decision === 'accept') {
-            newStatus = 'work_in_progress';
-            // Set harga final saat penawaran disetujui
-            dataToUpdate.finalPrice = orderData.quotedPrice;
-        } else { // decision === 'reject'
-            newStatus = 'quote_rejected';
-        }
-        
-        dataToUpdate.status = newStatus;
-        dataToUpdate.quoteRespondedAt = new Date();
+        const newStatus = decision === 'accept' ? 'work_in_progress' : 'quote_rejected';
+        const dataToUpdate = {
+            status: newStatus,
+            quoteRespondedAt: new Date()
+        };
+        if (decision === 'accept') dataToUpdate.finalPrice = orderData.quotedPrice;
 
         await orderRef.update(dataToUpdate);
 
-        res.status(200).json({ message: `Quote has been ${decision}ed successfully.` });
-
+        return sendSuccess(res, 200, `Quote has been ${decision}ed successfully.`);
     } catch (error) {
-        res.status(500).json({ message: 'Failed to respond to quote', error: error.message });
+        return sendError(res, 500, 'Failed to respond to quote: ' + error.message);
     }
 };
-
-
 
 module.exports = {
     createOrder,

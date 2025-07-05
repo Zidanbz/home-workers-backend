@@ -1,324 +1,240 @@
 const admin = require('firebase-admin');
 const db = admin.firestore();
+const { sendSuccess, sendError } = require('../utils/responseHelper');
 
-/**
- * POST /api/services
- * Worker membuat daftar layanan baru dengan detail paling lengkap.
- */
 const createService = async (req, res) => {
-    const { uid: workerId, role } = req.user;
-    const { 
-        namaLayanan, deskripsiLayanan, category, 
-        tipeLayanan, // 'fixed' atau 'survey'
-        harga, // Harga untuk tipe 'fixed'
-        biayaSurvei, // Biaya untuk tipe 'survey'
-        metodePembayaran, fotoUtamaUrl, photoUrls
-    } = req.body;
+  const { uid: workerId, role } = req.user;
+  const {
+    namaLayanan, deskripsiLayanan, category,
+    tipeLayanan, harga, biayaSurvei,
+    metodePembayaran, fotoUtamaUrl, photoUrls
+  } = req.body;
 
-    if (role !== 'WORKER') {
-        return res.status(403).json({ message: 'Forbidden: Only workers can create services.' });
+  if (role !== 'WORKER') {
+    return sendError(res, 403, 'Forbidden: Only workers can create services.');
+  }
+
+  if (!namaLayanan || !category || !tipeLayanan) {
+    return sendError(res, 400, 'Nama layanan, kategori, dan tipe layanan wajib diisi.');
+  }
+
+  const serviceData = {
+    workerId,
+    namaLayanan,
+    deskripsiLayanan: deskripsiLayanan || '',
+    category,
+    tipeLayanan,
+    metodePembayaran: Array.isArray(metodePembayaran) && metodePembayaran.length > 0 
+      ? metodePembayaran 
+      : ["Cash", "Cashless"],
+    fotoUtamaUrl: fotoUtamaUrl || (photoUrls?.[0] || ''),
+    photoUrls: photoUrls || [],
+    statusPersetujuan: 'pending',
+    dibuatPada: new Date(),
+  };
+
+  if (tipeLayanan === 'fixed') {
+    if (!harga) return sendError(res, 400, 'Harga wajib diisi untuk layanan harga tetap.');
+    serviceData.harga = Number(harga);
+  } else if (tipeLayanan === 'survey') {
+    serviceData.biayaSurvei = Number(biayaSurvei) || 0;
+  } else {
+    return sendError(res, 400, "Tipe layanan tidak valid. Gunakan 'fixed' atau 'survey'.");
+  }
+
+  try {
+    const newService = await db.collection('service').add(serviceData);
+    return sendSuccess(res, 201, 'Service created successfully and is awaiting approval.', {
+      serviceId: newService.id
+    });
+  } catch (error) {
+    return sendError(res, 500, 'Failed to create service.', error.message);
+  }
+};
+
+const getAllApprovedServices = async (req, res) => {
+  try {
+    const servicesSnapshot = await db.collection('service')
+      .where('statusPersetujuan', '==', 'approved')
+      .get();
+
+    if (servicesSnapshot.empty) {
+      return sendSuccess(res, 200, 'No approved services found.', []);
     }
 
-    if (!namaLayanan || !category || !tipeLayanan) {
-        return res.status(400).json({ message: 'Nama layanan, kategori, dan tipe layanan wajib diisi.' });
+    const services = await Promise.all(servicesSnapshot.docs.map(async (doc) => {
+      const data = doc.data();
+      const userDoc = await db.collection('users').doc(data.workerId).get();
+      const workerDoc = await db.collection('workers').doc(data.workerId).get();
+
+      if (userDoc.exists && workerDoc.exists) {
+        return {
+          serviceId: doc.id,
+          ...data,
+          workerInfo: {
+            nama: userDoc.data().nama,
+            rating: workerDoc.data().rating,
+          }
+        };
+      }
+      return null;
+    }));
+
+    const filtered = services.filter(Boolean);
+    return sendSuccess(res, 200, 'Approved services fetched successfully.', filtered);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get approved services', error.message);
+  }
+};
+
+const getMyServices = async (req, res) => {
+  const { uid: workerId, role } = req.user;
+  if (role !== 'WORKER') {
+    return sendError(res, 403, 'Forbidden: Only workers can view their services.');
+  }
+
+  try {
+    const snapshot = await db.collection('service').where('workerId', '==', workerId).get();
+    const services = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return sendSuccess(res, 200, 'My services fetched successfully.', services);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get my services', error.message);
+  }
+};
+
+const getServiceById = async (req, res) => {
+  try {
+    const { serviceId } = req.params;
+    const doc = await db.collection('service').doc(serviceId).get();
+
+    if (!doc.exists) {
+      return sendError(res, 404, 'Service not found.');
     }
 
-    // Siapkan data dasar untuk disimpan
-    const serviceData = {
-        workerId: workerId,
-        namaLayanan: namaLayanan,
-        deskripsiLayanan: deskripsiLayanan || '',
-        category: category,
-        tipeLayanan: tipeLayanan,
-        metodePembayaran: Array.isArray(metodePembayaran) && metodePembayaran.length > 0 
-            ? metodePembayaran 
-            : ["Cash", "Cashless"],
-        fotoUtamaUrl: fotoUtamaUrl || (photoUrls && photoUrls.length > 0 ? photoUrls[0] : ''),
-        photoUrls: photoUrls || [],
-        statusPersetujuan: 'pending',
-        dibuatPada: new Date(),
+    const data = doc.data();
+    const userDoc = await db.collection('users').doc(data.workerId).get();
+    const workerDoc = await db.collection('workers').doc(data.workerId).get();
+
+    const responseData = {
+      id: doc.id,
+      ...data
     };
 
-    // Tambahkan harga atau biaya survei berdasarkan tipenya
-    if (tipeLayanan === 'fixed') {
-        if (!harga) return res.status(400).json({ message: 'Harga wajib diisi untuk layanan harga tetap.' });
-        serviceData.harga = Number(harga);
-    } else if (tipeLayanan === 'survey') {
-        serviceData.biayaSurvei = Number(biayaSurvei) || 0; // Biaya survei bisa 0 (gratis)
-    } else {
-        return res.status(400).json({ message: "Tipe layanan tidak valid. Gunakan 'fixed' atau 'survey'." });
+    if (userDoc.exists && workerDoc.exists) {
+      responseData.workerInfo = {
+        id: data.workerId,
+        nama: userDoc.data().nama,
+        rating: workerDoc.data().rating,
+        jumlahOrderSelesai: workerDoc.data().jumlahOrderSelesai,
+      };
     }
 
-    try {
-        const newService = await db.collection('service').add(serviceData);
-        res.status(201).json({ message: 'Service created successfully and is awaiting approval.', serviceId: newService.id });
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to create service.', error: error.message });
-    }
+    return sendSuccess(res, 200, 'Service detail fetched successfully.', responseData);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get service details', error.message);
+  }
 };
 
-/**
- * GET /api/services
- * Mengambil daftar semua layanan yang telah disetujui (approved) untuk marketplace.
- */
-const getAllApprovedServices = async (req, res) => {
-    try {
-        // Langkah 1: Buat query untuk mengambil layanan yang statusnya 'approved'
-        const servicesQuery = db.collection('service').where('statusPersetujuan', '==', 'approved');
-        const servicesSnapshot = await servicesQuery.get();
-        console.log(`Query menemukan ${servicesSnapshot.size} layanan yang 'approved'.`);
-        if (servicesSnapshot.empty) {
-            return res.status(200).json([]); // Kembalikan array kosong jika tidak ada layanan
-        }
-
-        // Langkah 2: Gabungkan dengan data worker untuk setiap layanan
-        const promises = servicesSnapshot.docs.map(async (serviceDoc) => {
-            const serviceData = serviceDoc.data();
-            const workerId = serviceData.workerId;
-
-            // Ambil data dari koleksi 'users' (untuk nama) dan 'workers' (untuk rating)
-            const userDoc = await db.collection('users').doc(workerId).get();
-            const workerDoc = await db.collection('workers').doc(workerId).get();
-
-            // Gabungkan hanya jika data user dan worker ada
-            if (userDoc.exists && workerDoc.exists) {
-                const userData = userDoc.data();
-                const workerData = workerDoc.data();
-
-                return {
-                    serviceId: serviceDoc.id,
-                    ...serviceData,
-                    workerInfo: {
-                        nama: userData.nama,
-                        rating: workerData.rating,
-                    }
-                };
-            }
-            return null;
-        });
-        
-        // Langkah 3: Jalankan semua promise dan filter data yang tidak lengkap
-        const combinedServices = (await Promise.all(promises)).filter(s => s !== null);
-
-        res.status(200).json(combinedServices);
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get approved services', error: error.message });
-    }
-};
-const getMyServices = async (req, res) => {
-    const { uid: workerId, role } = req.user; // Ambil UID dan role dari token
-
-    // Security Check: Pastikan hanya worker yang bisa mengakses
-    if (role !== 'WORKER') {
-        return res.status(403).json({ message: 'Forbidden: Only workers can view their services.' });
-    }
-
-    try {
-        const servicesQuery = db.collection('service').where('workerId', '==', workerId);
-        const servicesSnapshot = await servicesQuery.get();
-
-        if (servicesSnapshot.empty) {
-            return res.status(200).json([]); // Kembalikan array kosong jika worker belum punya layanan
-        }
-
-        const myServices = servicesSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        res.status(200).json(myServices);
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get my services', error: error.message });
-    }
-};
-
-/**
- * GET /api/services/:serviceId
- * Mengambil detail lengkap dari satu layanan spesifik. (Publik)
- */
-const getServiceById = async (req, res) => {
-    try {
-        const { serviceId } = req.params;
-        const serviceRef = db.collection('service').doc(serviceId);
-        const serviceDoc = await serviceRef.get();
-
-        if (!serviceDoc.exists) {
-            return res.status(404).json({ message: 'Service not found.' });
-        }
-
-        const serviceData = serviceDoc.data();
-        const workerId = serviceData.workerId;
-
-        // Ambil data worker untuk digabungkan
-        const userDoc = await db.collection('users').doc(workerId).get();
-        const workerDoc = await db.collection('workers').doc(workerId).get();
-
-        if (!userDoc.exists || !workerDoc.exists) {
-            // Jika data worker tidak lengkap, tetap tampilkan data layanan
-            return res.status(200).json({ id: serviceDoc.id, ...serviceData });
-        }
-
-        const userData = userDoc.data();
-        const workerData = workerDoc.data();
-
-        // Gabungkan semua data menjadi satu respons yang lengkap
-        const combinedData = {
-            id: serviceDoc.id,
-            ...serviceData,
-            workerInfo: {
-                id: workerId,
-                nama: userData.nama,
-                // Anda bisa tambahkan foto profil worker di sini jika ada
-                rating: workerData.rating,
-                jumlahOrderSelesai: workerData.jumlahOrderSelesai,
-            }
-        };
-
-        res.status(200).json(combinedData);
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get service details', error: error.message });
-    }
-};
-
-/**
- * POST /api/services/:serviceId/photos
- * Worker menambahkan URL foto baru ke galeri layanannya.
- */
 const addPhotoToService = async (req, res) => {
-    const { uid: workerId } = req.user;
-    const { serviceId } = req.params;
-    const { photoUrl } = req.body;
+  const { uid: workerId } = req.user;
+  const { serviceId } = req.params;
+  const { photoUrl } = req.body;
 
-    if (!photoUrl) {
-        return res.status(400).json({ message: 'Photo URL is required.' });
+  if (!photoUrl) return sendError(res, 400, 'Photo URL is required.');
+
+  try {
+    const doc = await db.collection('service').doc(serviceId).get();
+    if (!doc.exists) return sendError(res, 404, 'Service not found.');
+
+    if (doc.data().workerId !== workerId) {
+      return sendError(res, 403, 'Forbidden: You are not the owner of this service.');
     }
 
-    try {
-        const serviceRef = db.collection('service').doc(serviceId);
-        const serviceDoc = await serviceRef.get();
+    await doc.ref.update({
+      photoUrls: admin.firestore.FieldValue.arrayUnion(photoUrl)
+    });
 
-        if (!serviceDoc.exists) {
-            return res.status(404).json({ message: 'Service not found.' });
-        }
-
-        // Security Check: Pastikan yang mengedit adalah pemilik layanan
-        if (serviceDoc.data().workerId !== workerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not the owner of this service.' });
-        }
-
-        // Tambahkan URL baru ke array 'photoUrls'.
-        // FieldValue.arrayUnion memastikan tidak ada URL duplikat.
-        await serviceRef.update({
-            photoUrls: admin.firestore.FieldValue.arrayUnion(photoUrl)
-        });
-
-        res.status(200).json({ message: 'Photo added successfully.' });
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to add photo', error: error.message });
-    }
+    return sendSuccess(res, 200, 'Photo added successfully.');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to add photo', error.message);
+  }
 };
 
-/**
- * PUT /api/services/:serviceId
- * Worker memperbarui detail layanannya yang sudah ada.
- */
 const updateService = async (req, res) => {
-    const { uid: workerId } = req.user;
-    const { serviceId } = req.params;
-    const { namaLayanan, deskripsiLayanan, harga, category, metodePembayaran, fotoUtamaUrl, tipeLayanan, biayaSurvei } = req.body;
+  const { uid: workerId } = req.user;
+  const { serviceId } = req.params;
+  const { namaLayanan, deskripsiLayanan, harga, category, metodePembayaran, fotoUtamaUrl, tipeLayanan, biayaSurvei } = req.body;
 
-    try {
-        const serviceRef = db.collection('service').doc(serviceId);
-        const serviceDoc = await serviceRef.get();
+  try {
+    const doc = await db.collection('service').doc(serviceId).get();
+    if (!doc.exists) return sendError(res, 404, 'Service not found.');
 
-        if (!serviceDoc.exists) {
-            return res.status(404).json({ message: 'Service not found.' });
-        }
-
-        if (serviceDoc.data().workerId !== workerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not the owner of this service.' });
-        }
-
-        const dataToUpdate = {};
-        if (namaLayanan) dataToUpdate.namaLayanan = namaLayanan;
-        if (deskripsiLayanan) dataToUpdate.deskripsiLayanan = deskripsiLayanan;
-        if (category) dataToUpdate.category = category;
-        if (metodePembayaran && Array.isArray(metodePembayaran)) dataToUpdate.metodePembayaran = metodePembayaran;
-        if (fotoUtamaUrl) dataToUpdate.fotoUtamaUrl = fotoUtamaUrl;
-        
-        // Logika update untuk harga berdasarkan tipe
-        if (tipeLayanan) {
-            dataToUpdate.tipeLayanan = tipeLayanan;
-            if (tipeLayanan === 'fixed' && harga !== undefined) {
-                dataToUpdate.harga = Number(harga);
-                dataToUpdate.biayaSurvei = admin.firestore.FieldValue.delete(); // Hapus biaya survei jika ada
-            } else if (tipeLayanan === 'survey' && biayaSurvei !== undefined) {
-                dataToUpdate.biayaSurvei = Number(biayaSurvei);
-                dataToUpdate.harga = admin.firestore.FieldValue.delete(); // Hapus harga jika ada
-            }
-        } else if (harga !== undefined) {
-            // Jika tipe tidak diubah, tapi harga diubah (untuk layanan fixed)
-            dataToUpdate.harga = Number(harga);
-        } else if (biayaSurvei !== undefined) {
-            // Jika tipe tidak diubah, tapi biaya survei diubah (untuk layanan survey)
-            dataToUpdate.biayaSurvei = Number(biayaSurvei);
-        }
-
-        if (Object.keys(dataToUpdate).length === 0) {
-            return res.status(400).json({ message: "No data provided for update." });
-        }
-
-        await serviceRef.update(dataToUpdate);
-        res.status(200).json({ message: 'Service updated successfully.' });
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to update service', error: error.message });
+    if (doc.data().workerId !== workerId) {
+      return sendError(res, 403, 'Forbidden: You are not the owner of this service.');
     }
+
+    const dataToUpdate = {};
+    if (namaLayanan) dataToUpdate.namaLayanan = namaLayanan;
+    if (deskripsiLayanan) dataToUpdate.deskripsiLayanan = deskripsiLayanan;
+    if (category) dataToUpdate.category = category;
+    if (metodePembayaran?.length) dataToUpdate.metodePembayaran = metodePembayaran;
+    if (fotoUtamaUrl) dataToUpdate.fotoUtamaUrl = fotoUtamaUrl;
+
+    if (tipeLayanan) {
+      dataToUpdate.tipeLayanan = tipeLayanan;
+      if (tipeLayanan === 'fixed' && harga !== undefined) {
+        dataToUpdate.harga = Number(harga);
+        dataToUpdate.biayaSurvei = admin.firestore.FieldValue.delete();
+      } else if (tipeLayanan === 'survey' && biayaSurvei !== undefined) {
+        dataToUpdate.biayaSurvei = Number(biayaSurvei);
+        dataToUpdate.harga = admin.firestore.FieldValue.delete();
+      }
+    } else if (harga !== undefined) {
+      dataToUpdate.harga = Number(harga);
+    } else if (biayaSurvei !== undefined) {
+      dataToUpdate.biayaSurvei = Number(biayaSurvei);
+    }
+
+    if (!Object.keys(dataToUpdate).length) {
+      return sendError(res, 400, 'No data provided for update.');
+    }
+
+    await doc.ref.update(dataToUpdate);
+    return sendSuccess(res, 200, 'Service updated successfully.');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to update service', error.message);
+  }
 };
 
-
-/**
- * DELETE /api/services/:serviceId
- * Worker menghapus layanannya sendiri.
- */
 const deleteService = async (req, res) => {
-    const { uid: workerId, role } = req.user;
-    const { serviceId } = req.params;
+  const { uid: workerId, role } = req.user;
+  const { serviceId } = req.params;
 
-    if (role !== 'WORKER') {
-        return res.status(403).json({ message: 'Forbidden: Only workers can delete services.' });
+  if (role !== 'WORKER') {
+    return sendError(res, 403, 'Forbidden: Only workers can delete services.');
+  }
+
+  try {
+    const doc = await db.collection('service').doc(serviceId).get();
+    if (!doc.exists) return sendError(res, 404, 'Service not found.');
+
+    if (doc.data().workerId !== workerId) {
+      return sendError(res, 403, 'Forbidden: You are not the owner of this service.');
     }
 
-    try {
-        const serviceRef = db.collection('service').doc(serviceId);
-        const serviceDoc = await serviceRef.get();
-
-        if (!serviceDoc.exists) {
-            return res.status(404).json({ message: 'Service not found.' });
-        }
-
-        // Security Check: Pastikan yang menghapus adalah pemilik layanan
-        if (serviceDoc.data().workerId !== workerId) {
-            return res.status(403).json({ message: 'Forbidden: You are not the owner of this service.' });
-        }
-
-        // Hapus dokumen layanan dari Firestore
-        await serviceRef.delete();
-
-        // TODO (Untuk Masa Depan): Tambahkan logika untuk menghapus foto-foto terkait
-        // dari Firebase Cloud Storage untuk menghemat ruang penyimpanan.
-
-        res.status(200).json({ message: 'Service deleted successfully.' });
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to delete service', error: error.message });
-    }
+    await doc.ref.delete();
+    return sendSuccess(res, 200, 'Service deleted successfully.');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to delete service', error.message);
+  }
 };
 
 module.exports = {
-    createService,
-    getAllApprovedServices,
-    getMyServices,
-    getServiceById,
-    addPhotoToService,
-    updateService,
-    deleteService,
+  createService,
+  getAllApprovedServices,
+  getMyServices,
+  getServiceById,
+  addPhotoToService,
+  updateService,
+  deleteService,
 };
