@@ -4,6 +4,9 @@ const admin = require('firebase-admin');
 const db = admin.firestore();
 const axios = require('axios'); 
 const { sendSuccess, sendError } = require('../utils/responseHelper');
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/ktp/' }); // Atau gunakan Firebase Storage nanti
+
 
 /**
  * Registrasi untuk CUSTOMER tanpa token.
@@ -42,10 +45,15 @@ const registerCustomer = async (req, res) => {
  * Registrasi untuk WORKER tanpa token.
  */
 const registerWorker = async (req, res) => {
-  const { email, password, nama, keahlian, deskripsi } = req.body;
+  const { email, password, nama, keahlian, deskripsi, linkPortofolio, noKtp } = req.body;
+  const ktpFile = req.file;
 
   if (!email || !password || !nama) {
     return sendError(res, 400, "Email, password, dan nama wajib diisi.");
+  }
+
+  if (!ktpFile) {
+    return sendError(res, 400, "KTP wajib diunggah.");
   }
 
   try {
@@ -70,6 +78,9 @@ const registerWorker = async (req, res) => {
     batch.set(workerDocRef, {
       keahlian: keahlian || [],
       deskripsi: deskripsi || '',
+      noKtp: noKtp || '',
+      linkPortofolio: linkPortofolio || '',
+      ktpFilePath: ktpFile.path, // Simpan path jika belum pakai Firebase Storage
       rating: 0,
       jumlahOrderSelesai: 0,
       dibuatPada: new Date(),
@@ -82,6 +93,7 @@ const registerWorker = async (req, res) => {
     return sendError(res, 409, "Failed to register worker", error.message);
   }
 };
+
 
 /**
  * Login untuk semua jenis pengguna.
