@@ -28,6 +28,7 @@ const userRoutes = require('./routes/userRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 //...
 app.use('/api/auth', authRoutes);
 app.use('/api/workers', workerRoutes);
@@ -39,7 +40,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/dashboard', dashboardRoutes);
-
+app.use('/api/payments', paymentRoutes);
 // Test Route
 app.get('/api', (req, res) => {
   res.status(200).json({ message: 'Welcome to Home Workers API!' });

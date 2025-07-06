@@ -229,6 +229,48 @@ const deleteService = async (req, res) => {
   }
 };
 
+const getServicesByCategory = async (req, res) => {
+  const { categoryName } = req.params;
+
+  if (!categoryName) {
+    return sendError(res, 400, 'Category name is required.');
+  }
+
+  try {
+    const servicesSnapshot = await db.collection('service')
+      .where('statusPersetujuan', '==', 'approved')
+      .where('category', '==', categoryName)
+      .get();
+
+    if (servicesSnapshot.empty) {
+      return sendSuccess(res, 200, `No approved services found for category ${categoryName}.`, []);
+    }
+
+    const services = await Promise.all(servicesSnapshot.docs.map(async (doc) => {
+      const data = doc.data();
+      const userDoc = await db.collection('users').doc(data.workerId).get();
+      const workerDoc = await db.collection('workers').doc(data.workerId).get();
+
+      if (userDoc.exists && workerDoc.exists) {
+        return {
+          serviceId: doc.id,
+          ...data,
+          workerInfo: {
+            nama: userDoc.data().nama,
+            rating: workerDoc.data().rating,
+          }
+        };
+      }
+      return null;
+    }));
+
+    const filtered = services.filter(Boolean);
+    return sendSuccess(res, 200, `Approved services for category ${categoryName} fetched successfully.`, filtered);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get services by category', error.message);
+  }
+};
+
 module.exports = {
   createService,
   getAllApprovedServices,
@@ -237,4 +279,5 @@ module.exports = {
   addPhotoToService,
   updateService,
   deleteService,
+  getServicesByCategory,
 };

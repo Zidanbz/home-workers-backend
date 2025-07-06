@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createService, getAllApprovedServices, getMyServices, getServiceById, addPhotoToService, updateService, deleteService} = require('../controllers/serviceController');
+const { createService, getAllApprovedServices, getMyServices, getServiceById, addPhotoToService, updateService, deleteService, getServicesByCategory} = require('../controllers/serviceController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
 
@@ -25,4 +25,7 @@ router.put('/:serviceId', authMiddleware, updateService);
 
 // Endpoint untuk worker menghapus layanannya
 router.delete('/:serviceId', authMiddleware, deleteService);
+
+// Endpoint publik untuk melihat layanan berdasarkan kategori
+router.get('/category/:categoryName', getServicesByCategory);
 module.exports = router;
