@@ -253,6 +253,36 @@ const respondToQuote = async (req, res) => {
     }
 };
 
+const rejectOrder = async (req, res) => {
+    const { uid: workerId } = req.user;
+    const { orderId } = req.params;
+
+    try {
+        const orderRef = db.collection('orders').doc(orderId);
+        const orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            return sendError(res, 404, 'Order not found.');
+        }
+
+        const orderData = orderDoc.data();
+        if (orderData.workerId !== workerId) {
+            return sendError(res, 403, 'Forbidden: You are not assigned to this order.');
+        }
+
+        if (orderData.status !== 'pending') {
+            return sendError(res, 409, `Cannot reject order with status: ${orderData.status}`);
+        }
+
+        await orderRef.update({ status: 'rejected' });
+
+        return sendSuccess(res, 200, 'Order rejected successfully.');
+    } catch (error) {
+        return sendError(res, 500, 'Failed to reject order: ' + error.message);
+    }
+};
+
+
 module.exports = {
     createOrder,
     getMyOrders,
@@ -263,4 +293,5 @@ module.exports = {
     enrichOrderData,
     proposeQuote,
     respondToQuote,
+    rejectOrder,
 };

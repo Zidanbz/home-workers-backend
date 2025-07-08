@@ -8,7 +8,8 @@ const {
     completeOrder,
     getOrderById,
     proposeQuote,
-    respondToQuote
+    respondToQuote,
+    rejectOrder
 } = require('../controllers/orderController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
@@ -38,4 +39,7 @@ router.post('/:orderId/quote', authMiddleware, proposeQuote);
 
 // Endpoint untuk customer merespons penawaran harga
 router.put('/:orderId/quote/respond', authMiddleware, respondToQuote);
+
+// Endpoint untuk worker menolak order
+router.put('/:orderId/reject', authMiddleware, rejectOrder);
 module.exports = router;

@@ -5,9 +5,16 @@ const { sendSuccess, sendError } = require('../utils/responseHelper');
 const createService = async (req, res) => {
   const { uid: workerId, role } = req.user;
   const {
-    namaLayanan, deskripsiLayanan, category,
-    tipeLayanan, harga, biayaSurvei,
-    metodePembayaran, fotoUtamaUrl, photoUrls
+    namaLayanan,
+    deskripsiLayanan,
+    category,
+    tipeLayanan,
+    harga,
+    biayaSurvei,
+    metodePembayaran,
+    fotoUtamaUrl,
+    photoUrls,
+    availability
   } = req.body;
 
   if (role !== 'WORKER') {
@@ -18,19 +25,24 @@ const createService = async (req, res) => {
     return sendError(res, 400, 'Nama layanan, kategori, dan tipe layanan wajib diisi.');
   }
 
+  if (typeof availability !== 'object' || Array.isArray(availability)) {
+    return sendError(res, 400, 'Availability harus berupa objek hari ke array slot waktu.');
+  }
+
   const serviceData = {
     workerId,
     namaLayanan,
     deskripsiLayanan: deskripsiLayanan || '',
     category,
     tipeLayanan,
-    metodePembayaran: Array.isArray(metodePembayaran) && metodePembayaran.length > 0 
-      ? metodePembayaran 
-      : ["Cash", "Cashless"],
+    metodePembayaran: Array.isArray(metodePembayaran) && metodePembayaran.length > 0
+      ? metodePembayaran
+      : ["Cek Dulu", "Cashless"],
     fotoUtamaUrl: fotoUtamaUrl || (photoUrls?.[0] || ''),
     photoUrls: photoUrls || [],
     statusPersetujuan: 'pending',
     dibuatPada: new Date(),
+    availability, // simpan langsung object availability dari frontend
   };
 
   if (tipeLayanan === 'fixed') {
@@ -51,6 +63,7 @@ const createService = async (req, res) => {
     return sendError(res, 500, 'Failed to create service.', error.message);
   }
 };
+
 
 const getAllApprovedServices = async (req, res) => {
   try {
@@ -163,7 +176,10 @@ const addPhotoToService = async (req, res) => {
 const updateService = async (req, res) => {
   const { uid: workerId } = req.user;
   const { serviceId } = req.params;
-  const { namaLayanan, deskripsiLayanan, harga, category, metodePembayaran, fotoUtamaUrl, tipeLayanan, biayaSurvei } = req.body;
+  const {
+    namaLayanan, deskripsiLayanan, harga, category, metodePembayaran,
+    fotoUtamaUrl, tipeLayanan, biayaSurvei, availability
+  } = req.body;
 
   try {
     const doc = await db.collection('service').doc(serviceId).get();
@@ -179,6 +195,7 @@ const updateService = async (req, res) => {
     if (category) dataToUpdate.category = category;
     if (metodePembayaran?.length) dataToUpdate.metodePembayaran = metodePembayaran;
     if (fotoUtamaUrl) dataToUpdate.fotoUtamaUrl = fotoUtamaUrl;
+    if (availability) dataToUpdate.availability = availability;
 
     if (tipeLayanan) {
       dataToUpdate.tipeLayanan = tipeLayanan;
