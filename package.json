@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "midtrans-client": "^1.4.3",
     "multer": "^2.0.1"
   }
 }

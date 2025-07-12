@@ -1,3 +1,5 @@
+const { error } = require("firebase-functions/logger");
+
 /**
  * Mengirim respons sukses yang terstruktur.
  * @param {object} res - Objek respons Express.
@@ -19,12 +21,11 @@ const sendSuccess = (res, statusCode, message, data = null) => {
    * @param {number} statusCode - Kode status HTTP (e.g., 400, 404, 500).
    * @param {string} message - Pesan error untuk frontend.
    */
-  const sendError = (res, statusCode, message, errors = null) => {
-    res.status(statusCode).json({
-      success: false,
+  const sendError = (res, statusCode, message, error = null) => {
+    if (error) console.error("SEND ERROR:", error);
+    return res.status(statusCode).json({
       message,
-      errors,
-      data: null,
+      error: error?.message || error?.toString?.() || null,
     });
   };
 

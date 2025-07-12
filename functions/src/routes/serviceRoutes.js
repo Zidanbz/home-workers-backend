@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createService, getAllApprovedServices, getMyServices, getServiceById, addPhotoToService, updateService, deleteService, getServicesByCategory} = require('../controllers/serviceController');
+const { createService, getAllApprovedServices, getMyServices, getServiceById, addPhotoToService, updateService, deleteService, getServicesByCategory, searchAndFilterServices} = require('../controllers/serviceController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
 
@@ -28,4 +28,8 @@ router.delete('/:serviceId', authMiddleware, deleteService);
 
 // Endpoint publik untuk melihat layanan berdasarkan kategori
 router.get('/category/:categoryName', getServicesByCategory);
+
+// Endpoint publik untuk pencarian layanan
+router.get('/search', searchAndFilterServices);
+
 module.exports = router;

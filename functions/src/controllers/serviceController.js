@@ -288,6 +288,78 @@ const getServicesByCategory = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/services/search?keyword=...&category=...&tipeLayanan=...&minHarga=...&maxHarga=...
+ */
+const searchAndFilterServices = async (req, res) => {
+  const {
+    keyword = '',
+    category,
+    tipeLayanan,
+    minHarga,
+    maxHarga
+  } = req.query;
+
+  try {
+    let query = db.collection('service')
+      .where('statusPersetujuan', '==', 'approved');
+
+    // Filter by category
+    if (category) {
+      query = query.where('category', '==', category);
+    }
+
+    // Filter by tipe layanan
+    if (tipeLayanan) {
+      query = query.where('tipeLayanan', '==', tipeLayanan);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) {
+      return sendSuccess(res, 200, 'No matching services found.', []);
+    }
+
+    const services = await Promise.all(snapshot.docs.map(async (doc) => {
+      const data = doc.data();
+
+      // Filter by keyword in namaLayanan or deskripsiLayanan
+      const keywordLower = keyword.toLowerCase();
+      const namaMatch = data.namaLayanan?.toLowerCase().includes(keywordLower);
+      const deskripsiMatch = data.deskripsiLayanan?.toLowerCase().includes(keywordLower);
+      if (keyword && !namaMatch && !deskripsiMatch) return null;
+
+      // Filter by harga range
+      if (minHarga || maxHarga) {
+        const harga = data.harga || 0;
+        if ((minHarga && harga < Number(minHarga)) || (maxHarga && harga > Number(maxHarga))) {
+          return null;
+        }
+      }
+
+      const userDoc = await db.collection('users').doc(data.workerId).get();
+      const workerDoc = await db.collection('workers').doc(data.workerId).get();
+
+      if (userDoc.exists && workerDoc.exists) {
+        return {
+          serviceId: doc.id,
+          ...data,
+          workerInfo: {
+            nama: userDoc.data().nama,
+            rating: workerDoc.data().rating,
+          }
+        };
+      }
+
+      return null;
+    }));
+
+    const filtered = services.filter(Boolean);
+    return sendSuccess(res, 200, 'Filtered services fetched successfully.', filtered);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to search and filter services.', error.message);
+  }
+};
+
 module.exports = {
   createService,
   getAllApprovedServices,
@@ -297,4 +369,5 @@ module.exports = {
   updateService,
   deleteService,
   getServicesByCategory,
+  searchAndFilterServices,
 };
