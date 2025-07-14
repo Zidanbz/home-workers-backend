@@ -21,13 +21,41 @@ const sendSuccess = (res, statusCode, message, data = null) => {
    * @param {number} statusCode - Kode status HTTP (e.g., 400, 404, 500).
    * @param {string} message - Pesan error untuk frontend.
    */
-  const sendError = (res, statusCode, message, error = null) => {
-    if (error) console.error("SEND ERROR:", error);
-    return res.status(statusCode).json({
-      message,
-      error: error?.message || error?.toString?.() || null,
-    });
-  };
+/**
+ * Mengirim respons error yang terstruktur dan mendetail.
+ * @param {object} res - Objek respons Express.
+ * @param {number} statusCode - Kode status HTTP.
+ * @param {string} message - Pesan error umum untuk frontend.
+ * @param {Error|object|null} error - Objek error (optional).
+ */
+const sendError = (res, statusCode, message, error = null) => {
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  let detailedError = null;
+
+  if (error) {
+    detailedError = {
+      name: error.name || 'Error',
+      message: error.message || error.toString(),
+      code: error.code || null,
+      stack: isDev ? error.stack : undefined,
+    };
+
+    // Log ke console saat development
+    if (isDev) {
+      console.error('SEND ERROR:', detailedError);
+    } else {
+      console.error('SEND ERROR:', error.message);
+    }
+  }
+
+  return res.status(statusCode).json({
+    success: false,
+    message,
+    error: detailedError,
+  });
+};
+
 
   const tryCatch = (controllerFn) => {
     return (req, res, next) => {

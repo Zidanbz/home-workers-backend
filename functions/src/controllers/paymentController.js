@@ -45,6 +45,16 @@ const createOrderWithPayment = async (req, res) => {
       return sendError(res, 400, 'Tipe layanan tidak dikenali.');
     }
 
+        const existingOrderSnap = await db.collection('orders')
+      .where('workerId', '==', workerId)
+      .where('jadwalPerbaikan', '==', new Date(jadwalPerbaikan))
+      .where('status', 'in', ['pending', 'accepted', 'work_in_progress'])
+      .get();
+
+    if (!existingOrderSnap.empty) {
+      return sendError(res, 409, 'Jadwal ini sudah dipesan oleh pelanggan lain. Silakan pilih waktu lain.');
+    }
+
     // Tambahkan order ke Firestore
     const orderRef = await db.collection('orders').add({
       customerId: uid,

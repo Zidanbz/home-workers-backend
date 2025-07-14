@@ -9,7 +9,9 @@ const {
     getOrderById,
     proposeQuote,
     respondToQuote,
-    rejectOrder
+    rejectOrder,
+    getWorkerAvailability,
+    getBookedSlots
 } = require('../controllers/orderController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
@@ -42,4 +44,11 @@ router.put('/:orderId/quote/respond', authMiddleware, respondToQuote);
 
 // Endpoint untuk worker menolak order
 router.put('/:orderId/reject', authMiddleware, rejectOrder);
+
+// Endpoint untuk mendapatkan availability worker
+router.get('/availability/:workerId', authMiddleware, getWorkerAvailability);
+
+// Endpoint untuk mendapatkan daftar slot yang telah dibooking
+router.get('/orders/booked-slots', getBookedSlots);
+
 module.exports = router;

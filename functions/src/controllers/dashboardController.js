@@ -8,9 +8,13 @@ const { sendSuccess, sendError } = require('../utils/responseHelper');
  */
 const getCustomerDashboardSummary = async (req, res) => {
   try {
-    // --- Bagian 1: Mengambil Best Performers ---
-    const workersQuery = db.collection('workers').orderBy('rating', 'desc').limit(5);
-    const workersSnapshot = await workersQuery.get();
+    const db = req.app.get('db');
+
+    // --- Best Performers: berdasarkan rating worker ---
+    const workersSnapshot = await db.collection('workers')
+      .orderBy('rating', 'desc')
+      .limit(5)
+      .get();
 
     const performersPromises = workersSnapshot.docs.map(async (workerDoc) => {
       const workerData = workerDoc.data();
@@ -30,14 +34,34 @@ const getCustomerDashboardSummary = async (req, res) => {
       return null;
     });
 
-    const bestPerformers = (await Promise.all(performersPromises)).filter(p => p !== null);
+    const bestPerformers = (await Promise.all(performersPromises)).filter(Boolean);
 
-    // --- Bagian 2: Mengambil Kategori Teratas ---
-    const topCategories = [
-      { name: 'Kebersihan', icon: 'cleaning_services', workerCount: '+490 Pekerja' },
-      { name: 'Perbaikan & Konstruksi', icon: 'build', workerCount: '+4190 Pekerja' },
-      { name: 'Perawatan & Pemeliharaan', icon: 'health_and_safety', workerCount: '+230 Pekerja' },
+    // --- Kategori tetap & jumlah layanan (service) di setiap kategori ---
+    const categoryList = [
+      { name: 'Kebersihan', icon: 'cleaning_services' },
+      { name: 'Perbaikan', icon: 'handyman' },
+      { name: 'Instalasi', icon: 'download' },
+      { name: 'Renovasi', icon: 'home_repair_service' },
+      { name: 'Elektronik', icon: 'electrical_services' },
+      { name: 'Otomotif', icon: 'directions_car' },
+      { name: 'Perawatan Taman', icon: 'local_florist' },
+      { name: 'Pembangunan', icon: 'construction' },
+      { name: 'Gadget', icon: 'phone_android' },
     ];
+
+    const topCategories = await Promise.all(
+      categoryList.map(async ({ name, icon }) => {
+        const serviceSnapshot = await db.collection('service')
+          .where('category', '==', name)
+          .get();
+
+        return {
+          name,
+          icon,
+          serviceCount: `+${serviceSnapshot.size} Layanan`,
+        };
+      })
+    );
 
     return sendSuccess(res, 200, 'Dashboard summary retrieved successfully', {
       topCategories,
@@ -49,6 +73,7 @@ const getCustomerDashboardSummary = async (req, res) => {
     return sendError(res, 500, 'Failed to get dashboard summary', error.message);
   }
 };
+
 
 module.exports = {
   getCustomerDashboardSummary,

@@ -166,31 +166,46 @@ const getOrderById = async (req, res) => {
 };
 
 async function enrichOrderData(orderDoc) {
-    const orderData = orderDoc.data();
-    const { customerId, workerId, serviceId } = orderData;
+  const orderData = orderDoc.data();
+  const { customerId, workerId, serviceId } = orderData;
 
-    const [customerDoc, serviceDoc] = await Promise.all([
-        db.collection('users').doc(customerId).get(),
-        serviceId ? db.collection('service').doc(serviceId).get() : Promise.resolve(null)
-    ]);
+  const [
+    customerDoc,
+    serviceDoc,
+    addressSnapshot,
+    workerUserDoc,
+    workerProfileDoc
+  ] = await Promise.all([
+    db.collection('users').doc(customerId).get(),
+    serviceId ? db.collection('service').doc(serviceId).get() : Promise.resolve(null),
+    db.collection('users').doc(customerId).collection('addresses').limit(1).get(),
+    workerId ? db.collection('users').doc(workerId).get() : Promise.resolve(null),
+    workerId ? db.collection('workers').doc(workerId).get() : Promise.resolve(null),
+  ]);
 
-    const addressSnapshot = await db.collection('users').doc(customerId).collection('addresses').limit(1).get();
-    const customerAddress = addressSnapshot.empty ? 'Alamat belum diatur' : addressSnapshot.docs[0].data().fullAddress;
+  const customerAddress = addressSnapshot.empty
+    ? 'Alamat belum diatur'
+    : addressSnapshot.docs[0].data().fullAddress;
 
-    return {
-        id: orderDoc.id,
-        ...orderData,
-        customerInfo: customerDoc.exists ? {
-            nama: customerDoc.data().nama,
-            alamat: customerAddress,
-        } : {},
-        serviceInfo: serviceDoc && serviceDoc.exists ? {
-            namaLayanan: serviceDoc.data().namaLayanan
-        } : {
-            namaLayanan: 'Layanan Langsung'
-        }
-    };
+  return {
+    id: orderDoc.id,
+    ...orderData,
+    customerInfo: customerDoc.exists ? {
+      nama: customerDoc.data().nama,
+      alamat: customerAddress,
+    } : {},
+    serviceInfo: serviceDoc && serviceDoc.exists ? {
+      namaLayanan: serviceDoc.data().namaLayanan,
+      category: serviceDoc.data().category
+    } : {
+      namaLayanan: 'Layanan Langsung',
+      category: 'lainnya'
+    },
+    workerName: workerUserDoc && workerUserDoc.exists ? workerUserDoc.data().nama : null,
+    workerDescription: workerProfileDoc && workerProfileDoc.exists ? workerProfileDoc.data().deskripsi : null,
+  };
 }
+
 
 const proposeQuote = async (req, res) => {
     const { uid: workerId, role } = req.user;
@@ -282,6 +297,65 @@ const rejectOrder = async (req, res) => {
     }
 };
 
+const getWorkerAvailability = async (req, res) => {
+  const { workerId } = req.params;
+  const { date } = req.query;
+
+  if (!date) return sendError(res, 400, 'Date is required in query.');
+
+  try {
+    const targetDate = new Date(date);
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+
+    const snapshot = await db.collection('orders')
+      .where('workerId', '==', workerId)
+      .where('jadwalPerbaikan', '>=', startOfDay)
+      .where('jadwalPerbaikan', '<=', endOfDay)
+      .where('status', 'in', ['pending', 'accepted', 'quote_proposed', 'work_in_progress']) // status aktif
+      .get();
+
+    const bookedTimes = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return data.jadwalPerbaikan.toDate();
+    });
+
+    return sendSuccess(res, 200, 'Booked times retrieved successfully.', bookedTimes);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get availability: ' + error.message);
+  }
+};
+
+const getBookedSlots = async (req, res) => {
+  const { workerId, date } = req.query;
+
+  if (!workerId || !date) {
+    return sendError(res, 400, 'workerId and date are required');
+  }
+
+  try {
+    const dateObj = new Date(date);
+    const start = new Date(dateObj.setHours(0, 0, 0, 0));
+    const end = new Date(dateObj.setHours(23, 59, 59, 999));
+
+    const snapshot = await db.collection('orders')
+      .where('workerId', '==', workerId)
+      .where('jadwalPerbaikan', '>=', start)
+      .where('jadwalPerbaikan', '<=', end)
+      .where('status', 'in', ['pending', 'accepted', 'work_in_progress'])
+      .get();
+
+    const bookedTimes = snapshot.docs.map(doc => {
+      const time = doc.data().jadwalPerbaikan.toDate();
+      return `${time.getHours().toString().padStart(2, '0')}.${time.getMinutes().toString().padStart(2, '0')}`;
+    });
+
+    return sendSuccess(res, 200, 'Booked time slots fetched', bookedTimes);
+  } catch (err) {
+    return sendError(res, 500, 'Failed to fetch booked slots: ' + err.message);
+  }
+};
+
 
 module.exports = {
     createOrder,
@@ -294,4 +368,6 @@ module.exports = {
     proposeQuote,
     respondToQuote,
     rejectOrder,
+    getWorkerAvailability,
+    getBookedSlots,
 };

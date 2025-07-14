@@ -1,11 +1,14 @@
 // src/controllers/authController.js
 
 const admin = require('firebase-admin');
-const db = admin.firestore();
-const axios = require('axios'); 
+const axios = require('axios');
+const fs = require('fs'); 
 const { sendSuccess, sendError } = require('../utils/responseHelper');
-const multer = require('multer');
-const upload = multer({ dest: 'uploads/ktp/' }); // Atau gunakan Firebase Storage nanti
+
+
+const db = admin.firestore();
+const bucket = admin.storage().bucket();
+
 
 
 /**
@@ -37,6 +40,7 @@ const registerCustomer = async (req, res) => {
 
     return sendSuccess(res, 201, "Customer user registered successfully", { userId: uid });
   } catch (error) {
+    console.error("Error during customer registration:", error);
     return sendError(res, 409, "Failed to register customer", error.message);
   }
 };
@@ -46,53 +50,83 @@ const registerCustomer = async (req, res) => {
  */
 const registerWorker = async (req, res) => {
   const { email, password, nama, keahlian, deskripsi, linkPortofolio, noKtp } = req.body;
-  const ktpFile = req.file;
+  // Ambil file dari req.files yang diisi oleh middleware baru
+  const { ktp: ktpFile, fotoDiri: fotoDiriFile } = req.files || {};
 
   if (!email || !password || !nama) {
     return sendError(res, 400, "Email, password, dan nama wajib diisi.");
   }
+  // Validasi kedua file
+  if (!ktpFile) return sendError(res, 400, "File KTP wajib diunggah.");
+  if (!fotoDiriFile) return sendError(res, 400, "Foto Diri wajib diunggah.");
 
-  if (!ktpFile) {
-    return sendError(res, 400, "KTP wajib diunggah.");
+  let keahlianArray;
+  try {
+    keahlianArray = keahlian ? JSON.parse(keahlian) : [];
+    if (!Array.isArray(keahlianArray)) { keahlianArray = [keahlianArray]; }
+  } catch (error) {
+    keahlianArray = typeof keahlian === 'string' ? keahlian.split(',').map(s => s.trim()) : [];
   }
 
+  let uid;
   try {
-    const userRecord = await admin.auth().createUser({
-      email,
-      password,
-      displayName: nama,
-    });
+    const userRecord = await admin.auth().createUser({ email, password, displayName: nama });
+    uid = userRecord.uid;
 
-    const uid = userRecord.uid;
+    // Fungsi helper untuk mengunggah satu file
+    const uploadFile = async (file, folder) => {
+      const filePath = `${folder}/${uid}/${Date.now()}_${file.originalname}`;
+      const fileUpload = bucket.file(filePath);
+      const stream = fileUpload.createWriteStream({
+        metadata: { contentType: file.mimetype },
+      });
+      await new Promise((resolve, reject) => {
+        stream.on('error', reject);
+        stream.on('finish', resolve);
+        stream.end(file.buffer);
+      });
+      await fileUpload.makePublic();
+      return fileUpload.publicUrl();
+    };
+    
+    // Unggah kedua file secara paralel untuk performa lebih baik
+    const [ktpUrl, fotoDiriUrl] = await Promise.all([
+      uploadFile(ktpFile, 'ktp_uploads'),
+      uploadFile(fotoDiriFile, 'foto_diri_uploads')
+    ]);
+
+    // Simpan kedua URL ke Firestore
     const batch = db.batch();
-
     const userDocRef = db.collection('users').doc(uid);
-    batch.set(userDocRef, {
-      email,
-      nama,
-      role: 'WORKER',
-      createdAt: new Date(),
-    });
+    batch.set(userDocRef, { email, nama, role: 'WORKER', fotoUrl: fotoDiriUrl, createdAt: new Date() }); // Tambahkan fotoUrl ke user juga
 
     const workerDocRef = db.collection('workers').doc(uid);
     batch.set(workerDocRef, {
-      keahlian: keahlian || [],
+      keahlian: keahlianArray,
       deskripsi: deskripsi || '',
       noKtp: noKtp || '',
       linkPortofolio: linkPortofolio || '',
-      ktpFilePath: ktpFile.path, // Simpan path jika belum pakai Firebase Storage
+      ktpUrl: ktpUrl,         // URL KTP
+      fotoDiriUrl: fotoDiriUrl, // <-- URL FOTO DIRI BARU
       rating: 0,
       jumlahOrderSelesai: 0,
+      status: 'pending',
       dibuatPada: new Date(),
     });
 
     await batch.commit();
 
     return sendSuccess(res, 201, "Worker user registered successfully", { userId: uid });
+
   } catch (error) {
-    return sendError(res, 409, "Failed to register worker", error.message);
+    console.error("Error selama registrasi worker:", error);
+    if (uid) {
+      await admin.auth().deleteUser(uid).catch(deleteErr => console.error("Gagal cleanup user:", deleteErr));
+    }
+    return sendError(res, 500, "Gagal mendaftarkan worker", error.message);
   }
 };
+
 
 
 /**
@@ -153,7 +187,7 @@ const loginUser = async (req, res) => {
       } else if (errorMessage === 'USER_DISABLED') {
           return sendError(res, 401, 'Your account has been disabled.');
       }
-      return sendError(res, 401, errorMessage);
+      return sendError(res, 401, error);
   }
 };
 
@@ -180,7 +214,7 @@ const getMyProfile = async (req, res) => {
       role: userData.role,
     });
   } catch (error) {
-    return sendError(res, 500, "Failed to fetch user profile.", error.message);
+    return sendError(res, 500, "Failed to fetch user profile.", error);
   }
 };
 

@@ -1,64 +1,59 @@
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+const functions = require('firebase-functions');
 const admin = require('firebase-admin');
-const functions = require("firebase-functions");
-// Konfigurasi Kunci Service Account
-const serviceAccount = require('../serviceAccountKey.json');
+require('dotenv').config();
+const morgan = require('morgan');
 
-// Inisialisasi Firebase Admin
+// Konfigurasi Firebase
+const serviceAccount = require('../serviceAccountKey.json');
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount),
+  storageBucket: 'home-workers-fa5cd.appspot.com',
 });
 
+const db = admin.firestore();
 const app = express();
+app.set('db', db);
 
-// Middlewares
+// Middleware dasar
 app.use(cors());
-app.use(express.json());
-
-// Routes
-const authRoutes = require('./routes/authRoutes');
-const workerRoutes = require('./routes/workerRoutes');
-const orderRoutes = require('./routes/orderRoutes');
-const reviewRoutes = require('./routes/reviewRoutes');
-const serviceRoutes = require('./routes/serviceRoutes');
-const adminRoutes = require('./routes/adminRoutes');
-const userRoutes = require('./routes/userRoutes');
-const chatRoutes = require('./routes/chatRoutes');
-const walletRoutes = require('./routes/walletRoutes');
-const dashboardRoutes = require('./routes/dashboardRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
-const morgan = require('morgan');
-const notificationRoutes = require('./routes/notificationRoutes');
-const midtransRoutes = require('./routes/midtransRoutes');
-//...
-
-app.use('/api/auth', authRoutes);
-app.use('/api/workers', workerRoutes);
-app.use('/api/orders', orderRoutes); 
-app.use('/api', reviewRoutes); 
-app.use('/api/services', serviceRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/users', userRoutes); 
-app.use('/api/chats', chatRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/payments', paymentRoutes);
 app.use(morgan('dev'));
-app.use('/api/payments', notificationRoutes);
-app.use(express.json());
-app.use('/api/midtrans', midtransRoutes);
+
+// ❗ PENTING: HAPUS express.json() dan express.urlencoded()
+// Di Cloud Functions Gen 2, parsing body (JSON, urlencoded, multipart)
+// sudah ditangani secara otomatis oleh lingkungan sebelum request masuk ke Express.
+// Menambahkan parser Express akan menyebabkan konflik dan mengosongkan req.body.
+// app.use(express.json()); // <-- HAPUS BARIS INI
+// app.use(express.urlencoded({ extended: true })); // <-- HAPUS BARIS INI
+
+// Daftarkan semua rute API Anda
+app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/workers', require('./routes/workerRoutes'));
+app.use('/api/orders', require('./routes/orderRoutes'));
+app.use('/api', require('./routes/reviewRoutes'));
+app.use('/api/services', require('./routes/serviceRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
+app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/chats', require('./routes/chatRoutes'));
+app.use('/api/wallet', require('./routes/walletRoutes'));
+app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/payments', require('./routes/paymentRoutes'));
+app.use('/api/payments', require('./routes/notificationRoutes'));
+app.use('/api/midtrans', require('./routes/midtransRoutes'));
+
 // Test Route
 app.get('/api', (req, res) => {
   res.status(200).json({ message: 'Welcome to Home Workers API!' });
 });
 
-// Hanya jalankan server lokal jika tidak sedang di-deploy ke Firebase
-// if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 8080;
-//   app.listen(PORT, () => {
-//     console.log(`Server lokal berjalan di port ${PORT}`);
-//   });
-// }
+// Global error handler
+const { sendError } = require('./utils/responseHelper');
+app.use((err, req, res, next) => {
+  console.error('🔥 GLOBAL ERROR HANDLER:', err);
+  sendError(res, 500, 'Unhandled server error', err.message || err);
+});
+// // Export aplikasi Express sebagai Firebase Function dengan region yang benar
+// exports.api = functions.runWith({ region: 'asia-southeast2' }).https.onRequest(app);
+// Export sebagai Firebase Function (Cloud Run)
 exports.api = functions.https.onRequest(app);
