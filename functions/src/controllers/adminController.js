@@ -31,7 +31,7 @@ const getPendingServices = async (req, res) => {
 const approveService = async (req, res) => {
   try {
     const { serviceId } = req.params;
-    const serviceRef = db.collection('services').doc(serviceId);
+    const serviceRef = db.collection('service').doc(serviceId);
 
     const serviceDoc = await serviceRef.get();
     if (!serviceDoc.exists) {
@@ -87,7 +87,7 @@ const approveService = async (req, res) => {
 const rejectService = async (req, res) => {
   try {
     const { serviceId } = req.params;
-    const serviceRef = db.collection('services').doc(serviceId);
+    const serviceRef = db.collection('service').doc(serviceId);
 
     const serviceDoc = await serviceRef.get();
     if (!serviceDoc.exists) {
