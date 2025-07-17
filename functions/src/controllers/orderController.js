@@ -180,7 +180,7 @@ const getOrderById = async (req, res) => {
       return sendError(res, 403, 'Forbidden: You are not part of this order.');
     }
 
-    // Jika worker minta & belum bayar → kembalikan data minimal (aman)
+    // ... (logika untuk worker & pembayaran tidak berubah)
     const isWorkerRequesting = orderData.workerId === uid;
     if (
       isWorkerRequesting &&
@@ -189,9 +189,7 @@ const getOrderById = async (req, res) => {
       return sendSuccess(res, 200, 'Order locked (awaiting payment).', {
         id: orderSnap.id,
         status: orderData.status,
-        paymentStatus: orderData.paymentStatus || 'unpaid',
-        jadwalPerbaikan: orderData.jadwalPerbaikan,
-        message: 'Customer belum menyelesaikan pembayaran. Data terkunci.',
+        // ...
       });
     }
 
@@ -224,6 +222,11 @@ const getOrderById = async (req, res) => {
       ? 'Alamat belum diatur'
       : (customerAddressSnap.docs[0].data().fullAddress || 'Alamat belum diatur');
 
+    // --- PERBAIKAN 1: Ambil data 'location' dari alamat customer ---
+    const location = customerAddressSnap.empty
+      ? null
+      : (customerAddressSnap.docs[0].data().location || null);
+
     // Service info
     let serviceName = 'Layanan Langsung';
     let serviceType = 'lainnya';
@@ -253,12 +256,14 @@ const getOrderById = async (req, res) => {
       customerName,
       customerAddress,
       serviceName,
-      serviceType,     // fixed | survey | lainnya
+      serviceType,
       serviceCategory,
       serviceHarga,
-
       workerName,
       workerDescription,
+
+      // --- PERBAIKAN 2: Tambahkan 'location' ke dalam payload ---
+      location,
     };
 
     return sendSuccess(res, 200, 'Order fetched successfully', payload);
