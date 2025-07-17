@@ -39,7 +39,8 @@ app.use('/api/chats', require('./routes/chatRoutes'));
 app.use('/api/wallet', require('./routes/walletRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
-app.use('/api/payments', require('./routes/notificationRoutes'));
+app.use('/api/reviews', require('./routes/reviewRoutes'));
+// app.use('/api/payments', require('./routes/notificationRoutes'));
 app.use('/api/midtrans', require('./routes/midtransRoutes'));
 
 // Test Route

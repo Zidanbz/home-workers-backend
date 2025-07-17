@@ -114,6 +114,12 @@ const registerWorker = async (req, res) => {
       dibuatPada: new Date(),
     });
 
+    const walletDocRef = db.collection('wallets').doc(uid);
+batch.set(walletDocRef, {
+  currentBalance: 0,
+  updatedAt: new Date()
+}, { merge: true }); // pakai merge biar tidak overwrite jika sudah ada
+
     await batch.commit();
 
     return sendSuccess(res, 201, "Worker user registered successfully", { userId: uid });
@@ -137,57 +143,92 @@ const loginUser = async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-      return sendError(res, 400, 'Email and password are required.');
+    return sendError(res, 400, 'Email and password are required.');
   }
 
   const firebaseAuthUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.APP_FIREBASE_WEB_API_KEY}`;
 
   try {
-      const firebaseResponse = await axios.post(firebaseAuthUrl, {
-          email,
-          password,
-          returnSecureToken: true
-      });
+    // LANGKAH 1: Verifikasi email & password. Minta KEDUA token.
+    const firebaseResponse = await axios.post(firebaseAuthUrl, {
+      email,
+      password,
+      returnSecureToken: true // Ubah kembali menjadi true untuk mendapatkan idToken
+    });
 
-      // AMBIL idToken LANGSUNG DARI RESPON FIREBASE
-      const { localId: uid, idToken, refreshToken, expiresIn } = firebaseResponse.data; 
+    // Ambil UID dan idToken dari respons verifikasi
+    const { localId: uid, idToken } = firebaseResponse.data;
+
+    // LANGKAH 2: Gunakan UID untuk membuat CUSTOM TOKEN dengan Admin SDK
+    const customToken = await admin.auth().createCustomToken(uid);
+
+    // Ambil data user dari Firestore
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return sendError(res, 404, 'User data not found in database.');
+    }
+    const userData = userDoc.data();
+
+    // LANGKAH 3: Kirim KEDUA token ke frontend
+    return sendSuccess(res, 200, 'Login successful, tokens generated.', {
+      // Token untuk login ke Firebase SDK di client
+      customToken: customToken, 
       
-      // Cek data user di Firestore (ini tetap perlu untuk mendapatkan role)
-      const userDocRef = db.collection('users').doc(uid);
-      const userDoc = await userDocRef.get();
-
-      if (!userDoc.exists) {
-          // Ini bisa terjadi jika user terautentikasi di Firebase Auth,
-          // tapi belum ada dokumennya di koleksi 'users' Firestore Anda.
-          // Anda mungkin ingin membuat dokumen user di sini atau menyarankan user untuk melengkapi profil.
-          return sendError(res, 404, 'User data not found in our database. Please complete your profile.');
+      // Token untuk header Authorization di API calls Anda yang lain
+      idToken: idToken,       
+      
+      user: {
+        uid,
+        email: userData.email,
+        nama: userData.nama,
+        role: userData.role,
       }
+    });
 
-      const userData = userDoc.data();
-
-      return sendSuccess(res, 200, 'Login successful', {
-          // Kirim idToken, refreshToken, dan data user ke frontend
-          idToken, // Ini yang akan digunakan frontend di header Authorization
-          refreshToken, // Untuk refresh token tanpa login ulang
-          expiresIn, // Durasi berlaku idToken
-          user: {
-              uid,
-              email: userData.email,
-              nama: userData.nama,
-              role: userData.role,
-          }
-      });
   } catch (error) {
-      const errorMessage = error.response?.data?.error?.message || 'Invalid credentials';
-      // Firebase Auth REST API sering mengembalikan error yang kurang user-friendly,
-      // seperti 'EMAIL_NOT_FOUND', 'INVALID_PASSWORD', 'USER_DISABLED'.
-      // Anda mungkin ingin memparsingnya menjadi pesan yang lebih baik untuk user.
-      if (errorMessage === 'EMAIL_NOT_FOUND' || errorMessage === 'INVALID_PASSWORD') {
-          return sendError(res, 401, 'Invalid email or password.');
-      } else if (errorMessage === 'USER_DISABLED') {
-          return sendError(res, 401, 'Your account has been disabled.');
+    // --- PENANGANAN ERROR YANG LEBIH DETAIL ---
+
+    // 1. Log error asli di server untuk debugging
+    console.error('LOGIN_ERROR_DETAIL:', error.response?.data?.error || error.message);
+
+    // 2. Siapkan variabel untuk respons error
+    let statusCode = 401; // Unauthorized secara default
+    let userMessage = 'Email atau password yang Anda masukkan salah.'; // Pesan default yang aman
+
+    const firebaseError = error.response?.data?.error;
+
+    if (firebaseError) {
+      switch (firebaseError.message) {
+        case 'INVALID_PASSWORD':
+        case 'EMAIL_NOT_FOUND':
+          // Untuk keamanan, kita tidak membedakan antara email tidak ada atau password salah.
+          // Cukup berikan pesan umum yang sama.
+          userMessage = 'Email atau password yang Anda masukkan salah.';
+          break;
+        
+        case 'USER_DISABLED':
+          userMessage = 'Akun Anda telah dinonaktifkan. Silakan hubungi customer service.';
+          break;
+
+        case 'INVALID_EMAIL':
+          statusCode = 400; // Bad Request, karena input dari user salah format
+          userMessage = 'Format email yang Anda masukkan tidak valid.';
+          break;
+
+        default:
+          // Untuk error Firebase lain yang tidak terduga, berikan pesan umum.
+          statusCode = 500; // Internal Server Error
+          userMessage = 'Terjadi kesalahan pada server saat mencoba login. Silakan coba lagi nanti.';
+          break;
       }
-      return sendError(res, 401, error);
+    } else {
+      // Untuk error non-Firebase (misalnya, masalah jaringan saat memanggil axios)
+      statusCode = 503; // Service Unavailable
+      userMessage = 'Tidak dapat terhubung ke server autentikasi. Periksa koneksi internet Anda.';
+    }
+    
+    // 3. Kirim respons error yang sudah diproses
+    return sendError(res, statusCode, userMessage);
   }
 };
 

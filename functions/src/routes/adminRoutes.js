@@ -6,7 +6,10 @@ const {
     getPendingServices,
     approveService,
     rejectService,
-    sendBroadcast
+    sendBroadcast,
+    getPendingWorkers,
+    approveWorker,
+    rejectWorker
 } = require('../controllers/adminController');
 
 // Impor kedua middleware
@@ -27,6 +30,16 @@ router.put('/services/:serviceId/reject', rejectService);
 
 // Endpoint untuk admin mengirim pesan broadcast
 router.post('/broadcast', sendBroadcast);
+
+// Rute untuk mendapatkan daftar worker
+router.get('/workers/pending', getPendingWorkers);
+
+// Rute untuk menyetujui worker
+router.put('/workers/:workerId/approve', approveWorker);
+
+// Rute untuk menolak worker
+router.put('/workers/:workerId/reject', rejectWorker);
+
 
 
 module.exports = router;

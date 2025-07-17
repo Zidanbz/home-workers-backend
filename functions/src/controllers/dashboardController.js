@@ -1,3 +1,5 @@
+// src/controllers/dashboardController.js (Diperbaiki)
+
 const admin = require('firebase-admin');
 const db = admin.firestore();
 const { sendSuccess, sendError } = require('../utils/responseHelper');
@@ -8,10 +10,9 @@ const { sendSuccess, sendError } = require('../utils/responseHelper');
  */
 const getCustomerDashboardSummary = async (req, res) => {
   try {
-    const db = req.app.get('db');
-
     // --- Best Performers: berdasarkan rating worker ---
     const workersSnapshot = await db.collection('workers')
+      .where('status', '==', 'approved') // Hanya worker yang sudah disetujui
       .orderBy('rating', 'desc')
       .limit(5)
       .get();
@@ -22,12 +23,15 @@ const getCustomerDashboardSummary = async (req, res) => {
 
       const userDoc = await db.collection('users').doc(userId).get();
 
+
       if (userDoc.exists) {
         const userData = userDoc.data();
         return {
           id: userId,
           nama: userData.nama,
-          avatarUrl: userData.avatarUrl || '',
+          // ✅ PERBAIKAN: Ambil dari 'fotoUrl' (di koleksi 'users')
+          // dan kirim sebagai 'fotoDiriUrl' agar konsisten dengan frontend
+          fotoDiriUrl: workerData.fotoDiriUrl || '', 
           rating: workerData.rating || 0,
         };
       }
@@ -36,7 +40,7 @@ const getCustomerDashboardSummary = async (req, res) => {
 
     const bestPerformers = (await Promise.all(performersPromises)).filter(Boolean);
 
-    // --- Kategori tetap & jumlah layanan (service) di setiap kategori ---
+    // --- Kategori (logika Anda sudah benar) ---
     const categoryList = [
       { name: 'Kebersihan', icon: 'cleaning_services' },
       { name: 'Perbaikan', icon: 'handyman' },
@@ -54,7 +58,6 @@ const getCustomerDashboardSummary = async (req, res) => {
         const serviceSnapshot = await db.collection('service')
           .where('category', '==', name)
           .get();
-
         return {
           name,
           icon,
@@ -73,7 +76,6 @@ const getCustomerDashboardSummary = async (req, res) => {
     return sendError(res, 500, 'Failed to get dashboard summary', error.message);
   }
 };
-
 
 module.exports = {
   getCustomerDashboardSummary,

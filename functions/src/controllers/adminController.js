@@ -186,9 +186,156 @@ const sendBroadcast = async (req, res) => {
   }
 };
 
+const getAllOrders = async (req, res) => {
+  try {
+    const snapshot = await db.collection('orders').orderBy('createdAt', 'desc').get();
+    const orders = [];
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const [customerSnap, workerSnap] = await Promise.all([
+        db.collection('users').doc(data.customerId).get(),
+        db.collection('users').doc(data.workerId).get(),
+      ]);
+
+      orders.push({
+        id: doc.id,
+        ...data,
+        customerName: customerSnap.exists ? customerSnap.data().nama : null,
+        workerName: workerSnap.exists ? workerSnap.data().nama : null,
+      });
+    }
+
+    return sendSuccess(res, 200, 'All orders fetched', orders);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to fetch orders', error.message);
+  }
+};
+
+const getAllWorkers = async (req, res) => {
+  try {
+    const snapshot = await db.collection('workers').get();
+    const workers = [];
+
+    for (const doc of snapshot.docs) {
+      const workerData = doc.data();
+      const userSnap = await db.collection('users').doc(doc.id).get();
+      const userData = userSnap.exists ? userSnap.data() : {};
+
+      workers.push({
+        id: doc.id,
+        nama: userData.nama,
+        email: userData.email,
+        status: workerData.status,
+        deskripsi: workerData.deskripsi,
+        ktpUrl: workerData.ktpUrl,
+        fotoDiriUrl: workerData.fotoDiriUrl,
+      });
+    }
+
+    return sendSuccess(res, 200, 'Workers fetched successfully', workers);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to fetch workers', error.message);
+  }
+};
+
+const getPendingWorkers = async (req, res) => {
+  try {
+    const snapshot = await db.collection('workers').where('status', '==', 'pending').get();
+
+    const pendingWorkers = await Promise.all(snapshot.docs.map(async doc => {
+      const data = doc.data();
+      const userSnap = await db.collection('users').doc(doc.id).get();
+      const userData = userSnap.exists ? userSnap.data() : {};
+
+      return {
+        id: doc.id,
+        ...data,
+        nama: userData.nama,
+        email: userData.email,
+        fotoUrl: userData.fotoUrl || '',
+      };
+    }));
+
+    return sendSuccess(res, 200, 'Pending workers fetched successfully', pendingWorkers);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to fetch pending workers', error.message);
+  }
+};
+
+const approveWorker = async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const workerRef = db.collection('workers').doc(workerId);
+    const workerSnap = await workerRef.get();
+
+    if (!workerSnap.exists) return sendError(res, 404, 'Worker not found');
+
+    await workerRef.update({ status: 'approved' });
+
+    // Kirim notifikasi ke worker
+    const userSnap = await db.collection('users').doc(workerId).get();
+    const fcmToken = userSnap.data()?.fcmToken;
+
+    if (fcmToken) {
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: 'Akun Disetujui ✅',
+          body: 'Akun worker Anda telah disetujui dan siap digunakan.',
+        },
+        data: { screen: 'profile' },
+      });
+    }
+
+    return sendSuccess(res, 200, 'Worker approved successfully');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to approve worker', error.message);
+  }
+};
+
+const rejectWorker = async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const workerRef = db.collection('workers').doc(workerId);
+    const workerSnap = await workerRef.get();
+
+    if (!workerSnap.exists) return sendError(res, 404, 'Worker not found');
+
+    await workerRef.update({ status: 'rejected' });
+
+    // Kirim notifikasi ke worker
+    const userSnap = await db.collection('users').doc(workerId).get();
+    const fcmToken = userSnap.data()?.fcmToken;
+
+    if (fcmToken) {
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: 'Pendaftaran Ditolak ❌',
+          body: 'Akun worker Anda ditolak. Silakan hubungi admin atau coba lagi.',
+        },
+        data: { screen: 'profile' },
+      });
+    }
+
+    return sendSuccess(res, 200, 'Worker rejected successfully');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to reject worker', error.message);
+  }
+};
+
+
+
+
 module.exports = {
   getPendingServices,
   approveService,
   rejectService,
   sendBroadcast,
+  getAllOrders,
+  getAllWorkers,
+  getPendingWorkers,
+  approveWorker,
+  rejectWorker,
 };

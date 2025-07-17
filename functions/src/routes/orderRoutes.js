@@ -11,7 +11,9 @@ const {
     respondToQuote,
     rejectOrder,
     getWorkerAvailability,
-    getBookedSlots
+    getBookedSlots,
+    createPaymentAfterQuote,
+    updateOrderStatus
 } = require('../controllers/orderController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
@@ -50,5 +52,10 @@ router.get('/availability/:workerId', authMiddleware, getWorkerAvailability);
 
 // Endpoint untuk mendapatkan daftar slot yang telah dibooking
 router.get('/orders/booked-slots', getBookedSlots);
+
+// Endpoint untuk membuat pembayaran
+router.post('/orders/:orderId/pay',  createPaymentAfterQuote);
+
+router.patch('/:id/status', authMiddleware, updateOrderStatus);
 
 module.exports = router;

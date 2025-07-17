@@ -46,124 +46,228 @@ const createOrder = async (req, res) => {
 };
 
 const getMyOrders = async (req, res) => {
-    const { uid } = req.user;
+  const { uid } = req.user;
 
-    try {
-        const customerOrdersQuery = db.collection('orders').where('customerId', '==', uid);
-        const customerOrdersSnapshot = await customerOrdersQuery.get();
-        const customerOrdersPromises = customerOrdersSnapshot.docs.map(enrichOrderData);
-        const customerOrders = await Promise.all(customerOrdersPromises);
+  try {
+    const customerOrdersQuery = db.collection('orders').where('customerId', '==', uid);
+    const customerOrdersSnapshot = await customerOrdersQuery.get();
+    const customerOrdersPromises = customerOrdersSnapshot.docs.map(enrichOrderData);
+    const customerOrders = await Promise.all(customerOrdersPromises);
 
-        const workerOrdersQuery = db.collection('orders').where('workerId', '==', uid);
-        const workerOrdersSnapshot = await workerOrdersQuery.get();
-        const workerOrdersPromises = workerOrdersSnapshot.docs.map(enrichOrderData);
-        const workerOrders = await Promise.all(workerOrdersPromises);
+    const workerOrdersQuery = db.collection('orders').where('workerId', '==', uid);
+    const workerOrdersSnapshot = await workerOrdersQuery.get();
+    const workerOrdersPromises = workerOrdersSnapshot.docs.map(enrichOrderData);
+    const workerOrders = await Promise.all(workerOrdersPromises);
 
-        return sendSuccess(res, 200, 'Orders fetched successfully', {
-            asCustomer: customerOrders,
-            asWorker: workerOrders
-        });
-    } catch (error) {
-        return sendError(res, 500, 'Failed to get orders: ' + error.message);
-    }
+    return sendSuccess(res, 200, 'Orders fetched successfully', {
+      asCustomer: customerOrders,
+      asWorker: workerOrders
+    });
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get orders: ' + error.message);
+  }
 };
 
+
 const acceptOrder = async (req, res) => {
-    const { uid: workerId } = req.user;
-    const { orderId } = req.params;
+  const { uid: workerId } = req.user;
+  const { orderId } = req.params;
 
-    try {
-        const orderDocRef = db.collection('orders').doc(orderId);
-        const doc = await orderDocRef.get();
+  try {
+    const orderDocRef = db.collection('orders').doc(orderId);
+    const doc = await orderDocRef.get();
 
-        if (!doc.exists) return sendError(res, 404, 'Order not found.');
+    if (!doc.exists) return sendError(res, 404, 'Order not found.');
 
-        const orderData = doc.data();
-        if (orderData.workerId !== workerId) return sendError(res, 403, 'Forbidden: You are not assigned to this order.');
-        if (orderData.status !== 'pending') return sendError(res, 409, `Cannot accept order with status: ${orderData.status}`);
-
-        await orderDocRef.update({ status: 'accepted' });
-        return sendSuccess(res, 200, 'Order accepted successfully');
-    } catch (error) {
-        return sendError(res, 500, 'Failed to accept order: ' + error.message);
+    const orderData = doc.data();
+    if (orderData.workerId !== workerId) return sendError(res, 403, 'Forbidden: You are not assigned to this order.');
+    if (orderData.status !== 'pending') return sendError(res, 409, `Cannot accept order with status: ${orderData.status}`);
+    if (!orderData.workerAccess || orderData.paymentStatus !== 'paid') {
+      return sendError(res, 402, 'Customer belum menyelesaikan pembayaran. Tidak dapat menerima order.');
     }
+
+    await orderDocRef.update({ status: 'accepted' });
+    return sendSuccess(res, 200, 'Order accepted successfully');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to accept order: ' + error.message);
+  }
 };
 
 const completeOrder = async (req, res) => {
-    const { uid: workerId } = req.user;
-    const { orderId } = req.params;
+  const { orderId } = req.params;
+  const { uid: workerId } = req.user;
 
-    const orderRef = db.collection('orders').doc(orderId);
-    const walletRef = db.collection('wallets').doc(workerId);
+  const orderRef = db.collection('orders').doc(orderId);
+  const orderDoc = await orderRef.get();
 
-    try {
-        await db.runTransaction(async (transaction) => {
-            const orderDoc = await transaction.get(orderRef);
-            if (!orderDoc.exists) throw new Error('Order not found.');
+  if (!orderDoc.exists) return sendError(res, 404, 'Order not found');
 
-            const orderData = orderDoc.data();
-            if (orderData.workerId !== workerId) throw new Error('Forbidden: You are not assigned to this order.');
-            if (orderData.status !== 'work_in_progress') throw new Error(`Cannot complete order with status: ${orderData.status}`);
+  const order = orderDoc.data();
+  if (order.workerId !== workerId) return sendError(res, 403, 'Not your order');
+  if (order.status !== 'work_in_progress') {
+    return sendError(res, 400, 'Order must be in progress');
+  }
 
-            const finalPrice = orderData.finalPrice || orderData.harga || 0;
-            if (finalPrice <= 0) throw new Error('Order has no price and cannot be completed.');
+  if (!order.paymentStatus || order.paymentStatus !== 'paid') {
+    return sendError(res, 402, 'Order belum dibayar, tidak bisa diselesaikan.');
+  }
 
-            transaction.set(walletRef, { currentBalance: admin.firestore.FieldValue.increment(finalPrice) }, { merge: true });
+  const finalPrice = order.finalPrice || order.harga;
+  const workerAmount = finalPrice * 0.8;
 
-            const newTransactionRef = walletRef.collection('transactions').doc();
-            transaction.set(newTransactionRef, {
-                type: 'cash-in',
-                amount: finalPrice,
-                description: `From order #${orderId.substring(0, 6)}`,
-                status: 'confirmed',
-                timestamp: new Date(),
-            });
+  const walletRef = db.collection('wallets').doc(workerId);
+  const walletDoc = await walletRef.get();
+  const currentBalance = walletDoc.exists ? walletDoc.data().currentBalance || 0 : 0;
 
-            transaction.update(orderRef, { status: 'completed' });
-        });
+  const newTransactionRef = walletRef.collection('transactions').doc();
 
-        return sendSuccess(res, 200, 'Order marked as completed and payment processed.');
-    } catch (error) {
-        return sendError(res, 500, error.message);
-    }
+  await Promise.all([
+    orderRef.update({
+      status: 'completed',
+      completedAt: new Date(),
+    }),
+    walletRef.set({
+      currentBalance: currentBalance + workerAmount,
+    }, { merge: true }),
+    newTransactionRef.set({
+      type: 'cash-in',
+      amount: workerAmount,
+      description: `Pembayaran dari Order #${orderId} (80%)`,
+      orderId,
+      status: 'success',
+      timestamp: new Date(),
+    }),
+  ]);
+
+  return sendSuccess(res, 200, 'Order completed and payment released.');
 };
 
 const cancelOrder = async (req, res) => {
-    const { uid: customerId } = req.user;
-    const { orderId } = req.params;
+  const { uid: customerId } = req.user;
+  const { orderId } = req.params;
 
-    try {
-        const orderDocRef = db.collection('orders').doc(orderId);
-        const doc = await orderDocRef.get();
+  try {
+    const orderDocRef = db.collection('orders').doc(orderId);
+    const doc = await orderDocRef.get();
 
-        if (!doc.exists) return sendError(res, 404, 'Order not found.');
-        if (doc.data().customerId !== customerId) return sendError(res, 403, 'Forbidden: You did not create this order.');
-        if (!['pending', 'accepted'].includes(doc.data().status)) return sendError(res, 409, 'Order cannot be cancelled at its current state.');
+    if (!doc.exists) return sendError(res, 404, 'Order not found.');
+    if (doc.data().customerId !== customerId) return sendError(res, 403, 'Forbidden: You did not create this order.');
+    if (!['pending', 'accepted'].includes(doc.data().status)) return sendError(res, 409, 'Order cannot be cancelled at its current state.');
 
-        await orderDocRef.update({ status: 'cancelled' });
-        return sendSuccess(res, 200, 'Order has been cancelled');
-    } catch (error) {
-        return sendError(res, 500, 'Failed to cancel order: ' + error.message);
-    }
+    await orderDocRef.update({ status: 'cancelled' });
+    return sendSuccess(res, 200, 'Order has been cancelled');
+  } catch (error) {
+    return sendError(res, 500, 'Failed to cancel order: ' + error.message);
+  }
 };
 
 const getOrderById = async (req, res) => {
-    const { uid } = req.user;
-    const { orderId } = req.params;
+  const { uid } = req.user;
+  const { orderId } = req.params;
 
-    try {
-        const orderDoc = await db.collection('orders').doc(orderId).get();
+  try {
+    const orderRef = db.collection('orders').doc(orderId);
+    const orderSnap = await orderRef.get();
 
-        if (!orderDoc.exists) return sendError(res, 404, 'Order not found.');
-
-        const orderData = orderDoc.data();
-        if (orderData.customerId !== uid && orderData.workerId !== uid) return sendError(res, 403, 'Forbidden: You are not part of this order.');
-
-        return sendSuccess(res, 200, 'Order fetched successfully', { id: orderDoc.id, ...orderData });
-    } catch (error) {
-        return sendError(res, 500, 'Failed to get order details: ' + error.message);
+    if (!orderSnap.exists) {
+      return sendError(res, 404, 'Order not found.');
     }
+
+    const orderData = orderSnap.data();
+
+    // Akses hanya customer / worker terkait
+    if (orderData.customerId !== uid && orderData.workerId !== uid) {
+      return sendError(res, 403, 'Forbidden: You are not part of this order.');
+    }
+
+    // Jika worker minta & belum bayar → kembalikan data minimal (aman)
+    const isWorkerRequesting = orderData.workerId === uid;
+    if (
+      isWorkerRequesting &&
+      (!orderData.workerAccess || orderData.paymentStatus !== 'paid')
+    ) {
+      return sendSuccess(res, 200, 'Order locked (awaiting payment).', {
+        id: orderSnap.id,
+        status: orderData.status,
+        paymentStatus: orderData.paymentStatus || 'unpaid',
+        jadwalPerbaikan: orderData.jadwalPerbaikan,
+        message: 'Customer belum menyelesaikan pembayaran. Data terkunci.',
+      });
+    }
+
+    // ----- ENRICH -----
+    const { customerId, workerId, serviceId } = orderData;
+
+    const customerRef = db.collection('users').doc(customerId);
+    const workerUserRef = workerId ? db.collection('users').doc(workerId) : null;
+    const workerProfileRef = workerId ? db.collection('workers').doc(workerId) : null;
+    const serviceRef = serviceId ? db.collection('service').doc(serviceId) : null;
+    const customerAddressRef = db.collection('users').doc(customerId).collection('addresses').limit(1);
+
+    const [
+      customerSnap,
+      workerUserSnap,
+      workerProfileSnap,
+      serviceSnap,
+      customerAddressSnap,
+    ] = await Promise.all([
+      customerRef.get(),
+      workerUserRef ? workerUserRef.get() : Promise.resolve(null),
+      workerProfileRef ? workerProfileRef.get() : Promise.resolve(null),
+      serviceRef ? serviceRef.get() : Promise.resolve(null),
+      customerAddressRef.get(),
+    ]);
+
+    // Customer info
+    const customerName = customerSnap.exists ? customerSnap.data().nama || 'Customer' : 'Customer';
+    const customerAddress = customerAddressSnap.empty
+      ? 'Alamat belum diatur'
+      : (customerAddressSnap.docs[0].data().fullAddress || 'Alamat belum diatur');
+
+    // Service info
+    let serviceName = 'Layanan Langsung';
+    let serviceType = 'lainnya';
+    let serviceCategory = 'lainnya';
+    let serviceHarga = orderData.harga;
+
+    if (serviceSnap && serviceSnap.exists) {
+      const s = serviceSnap.data();
+      serviceName = s.namaLayanan ?? serviceName;
+      serviceType = s.tipeLayanan ?? serviceType;
+      serviceCategory = s.category ?? serviceCategory;
+      serviceHarga = s.harga ?? serviceHarga;
+    }
+
+    // Worker info (opsional)
+    const workerName =
+      workerUserSnap && workerUserSnap.exists ? workerUserSnap.data().nama || null : null;
+    const workerDescription =
+      workerProfileSnap && workerProfileSnap.exists ? workerProfileSnap.data().deskripsi || null : null;
+
+    // Bentuk payload sinkron dengan Order model FE
+    const payload = {
+      id: orderSnap.id,
+      ...orderData,
+
+      // Flatten untuk FE
+      customerName,
+      customerAddress,
+      serviceName,
+      serviceType,     // fixed | survey | lainnya
+      serviceCategory,
+      serviceHarga,
+
+      workerName,
+      workerDescription,
+    };
+
+    return sendSuccess(res, 200, 'Order fetched successfully', payload);
+  } catch (error) {
+    console.error('getOrderById error:', error);
+    return sendError(res, 500, 'Failed to get order details: ' + error.message);
+  }
 };
+
 
 async function enrichOrderData(orderDoc) {
   const orderData = orderDoc.data();
@@ -222,6 +326,9 @@ const proposeQuote = async (req, res) => {
         if (!orderDoc.exists) return sendError(res, 404, 'Order not found.');
         if (orderDoc.data().workerId !== workerId) return sendError(res, 403, 'Forbidden: You are not assigned to this order.');
         if (orderDoc.data().status !== 'accepted') return sendError(res, 409, `Cannot propose a quote for an order with status '${orderDoc.data().status}'.`);
+        if (!orderDoc.data().workerAccess || orderDoc.data().paymentStatus !== 'paid') {
+            return sendError(res, 402, 'Order belum dibayar. Tidak bisa kirim penawaran.');
+            } 
 
         await orderRef.update({
             quotedPrice: price,
@@ -253,7 +360,7 @@ const respondToQuote = async (req, res) => {
         if (orderData.customerId !== customerId) return sendError(res, 403, 'You are not the customer for this order.');
         if (orderData.status !== 'quote_proposed') return sendError(res, 409, `Cannot respond to quote with status '${orderData.status}'.`);
 
-        const newStatus = decision === 'accept' ? 'work_in_progress' : 'quote_rejected';
+        const newStatus = decision === 'accept' ? 'quote_accepted' : 'quote_rejected';
         const dataToUpdate = {
             status: newStatus,
             quoteRespondedAt: new Date()
@@ -356,6 +463,89 @@ const getBookedSlots = async (req, res) => {
   }
 };
 
+const createPaymentAfterQuote = async (req, res) => {
+  const { orderId } = req.params;
+  const { uid: customerId, role } = req.user;
+
+  if (role !== 'CUSTOMER') {
+    return sendError(res, 403, 'Only customers can initiate payment.');
+  }
+
+  try {
+    const orderRef = db.collection('orders').doc(orderId);
+    const orderDoc = await orderRef.get();
+
+    if (!orderDoc.exists) {
+      return sendError(res, 404, 'Order not found');
+    }
+
+    const order = orderDoc.data();
+
+    if (order.customerId !== customerId) {
+      return sendError(res, 403, 'You are not authorized to pay this order.');
+    }
+
+    if (order.status !== 'quote_accepted') {
+      return sendError(res, 400, 'You can only pay orders with accepted quote.');
+    }
+
+    const snapToken = await createMidtransTransaction({
+      orderId: orderId,
+      grossAmount: order.finalPrice,
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+    });
+
+    await orderRef.update({ snapToken });
+
+    return sendSuccess(res, 200, 'Snap token created successfully.', { snapToken });
+  } catch (error) {
+    return sendError(res, 500, 'Failed to create Snap token.', error.message);
+  }
+};
+
+const allowedStatus = ['waiting', 'on_the_way', 'work_in_progress', 'done', 'cancelled', 'rejected', 'paid', 'quote_proposed', 'quote_accepted', 'quote_rejected', 'pending', 'accepted', 'completed'];
+
+const updateOrderStatus = async (req, res) => {
+  const { uid: workerId, role } = req.user;
+  const orderId = req.params.id;
+  const { status } = req.body;
+
+  if (role !== 'WORKER') {
+    return sendError(res, 403, 'Hanya worker yang bisa mengubah status order.');
+  }
+
+  if (!allowedStatus.includes(status)) {
+    return sendError(res, 400, 'Status tidak valid.');
+  }
+
+  try {
+    const orderRef = db.collection('orders').doc(orderId);
+    const orderSnap = await orderRef.get();
+
+    if (!orderSnap.exists) {
+      return sendError(res, 404, 'Order tidak ditemukan.');
+    }
+
+    const orderData = orderSnap.data();
+    if (orderData.workerId !== workerId) {
+      return sendError(res, 403, 'Anda tidak memiliki izin untuk mengubah order ini.');
+    }
+
+     if (!orderData.workerAccess || orderData.paymentStatus !== 'paid') {
+   return sendError(res, 402, 'Order ini belum dibayar. Tidak dapat mengubah status.');
+ }
+
+    await orderRef.update({
+      status,
+      updatedAt: new Date(),
+    });
+
+    return sendSuccess(res, 200, `Status order berhasil diubah menjadi ${status}.`);
+  } catch (error) {
+    return sendError(res, 500, 'Gagal mengubah status order.', error.message);
+  }
+};
 
 module.exports = {
     createOrder,
@@ -370,4 +560,6 @@ module.exports = {
     rejectOrder,
     getWorkerAvailability,
     getBookedSlots,
+    createPaymentAfterQuote,
+    updateOrderStatus,
 };
