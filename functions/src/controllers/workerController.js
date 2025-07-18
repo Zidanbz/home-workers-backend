@@ -100,23 +100,111 @@ const getWorkerById = async (req, res) => {
  * GET /api/workers/me/dashboard
  */
 const getDashboardSummary = async (req, res) => {
-  const { uid: workerId } = req.user;
+  const { uid: workerId, role } = req.user || {};
+
+  if (!workerId) {
+    return sendError(res, 401, 'Unauthorized: missing user.');
+  }
+  if (role && role !== 'WORKER') {
+    return sendError(res, 403, 'Forbidden: only workers can access this endpoint.');
+  }
 
   try {
-    const [pendingSnapshot, acceptedSnapshot, completedSnapshot] = await Promise.all([
-      db.collection('orders').where('workerId', '==', workerId).where('status', '==', 'pending').get(),
-      db.collection('orders').where('workerId', '==', workerId).where('status', '==', 'accepted').get(),
-      db.collection('orders').where('workerId', '==', workerId).where('status', '==', 'completed').get(),
+    const ordersRef = db.collection('orders');
+    const workersRef = db.collection('workers').doc(workerId);
+    const usersRef = db.collection('users').doc(workerId);
+    const reviewsRef = db.collection('reviews');
+
+    // --- Parallel Firestore reads ---
+    const [
+      pendingQ,
+      acceptedQ,
+      completedQ,
+      workerDocSnap,
+      userDocSnap,
+      recentReviewsSnap,
+    ] = await Promise.all([
+      ordersRef.where('workerId', '==', workerId).where('status', '==', 'pending').get(),
+      ordersRef.where('workerId', '==', workerId).where('status', '==', 'accepted').get(),
+      ordersRef.where('workerId', '==', workerId).where('status', '==', 'completed').get(),
+      workersRef.get(),
+      usersRef.get(),
+      reviewsRef
+        .where('workerId', '==', workerId)
+        .orderBy('createdAt', 'desc')
+        .limit(5)
+        .get(),
     ]);
 
     const summary = {
-      pendingOrdersCount: pendingSnapshot.size,
-      acceptedOrdersCount: acceptedSnapshot.size,
-      completedOrdersCount: completedSnapshot.size,
+      pendingOrdersCount: pendingQ.size,
+      acceptedOrdersCount: acceptedQ.size,
+      completedOrdersCount: completedQ.size,
     };
 
-    return sendSuccess(res, 200, 'Dashboard summary fetched successfully.', summary);
+    // --- Worker profile merge ---
+    let workerData = {};
+    if (workerDocSnap.exists) workerData = { ...workerDocSnap.data() };
+    if (userDocSnap.exists) {
+      // utamakan field user untuk nama/email/kontak
+      const userData = userDocSnap.data();
+      workerData = {
+        ...workerData,
+        uid: workerId,
+        nama: userData.nama ?? workerData.nama,
+        email: userData.email ?? workerData.email,
+        contact: userData.contact ?? workerData.contact,
+        role: userData.role ?? workerData.role,
+      };
+    } else {
+      workerData = { ...workerData, uid: workerId }; // minimal
+    }
+
+    // Pastikan array
+    if (!Array.isArray(workerData.keahlian) && workerData.keahlian != null) {
+      // Firestore bisa simpan map numerik; ubah ke array nilai
+      workerData.keahlian = Object.values(workerData.keahlian);
+    }
+
+    // --- Reviews + rating aggregate ---
+    let ratingSum = 0;
+    const reviews = recentReviewsSnap.docs.map((doc) => {
+      const d = doc.data();
+      const rating = typeof d.rating === 'number' ? d.rating : 0;
+      ratingSum += rating;
+      return {
+        reviewId: doc.id,
+        customerId: d.customerId ?? null,
+        customerName: d.customerName ?? 'Customer',
+        customerAvatarUrl: d.customerAvatarUrl ?? null,
+        rating,
+        comment: d.comment ?? '',
+        createdAt: d.createdAt?.toDate
+          ? d.createdAt.toDate().toISOString()
+          : d.createdAt ?? null,
+        verified: !!d.verified,
+      };
+    });
+
+    const ratingCount = recentReviewsSnap.size;
+    const ratingAverage = ratingCount > 0 ? ratingSum / ratingCount : 0;
+
+    // Jika workerData.rating kosong dan kamu ingin auto‑isi:
+    if (workerData.rating == null || workerData.rating === 0) {
+      workerData.rating = ratingAverage;
+    }
+
+    const payload = {
+      ...summary,
+      worker: workerData,
+      reviews,
+      ratingAverage,
+      ratingCount,
+    };
+
+    return sendSuccess(res, 200, 'Dashboard summary fetched successfully.', payload);
   } catch (error) {
+    console.error('[getDashboardSummary] error:', error);
     return sendError(res, 500, 'Failed to get dashboard summary.', error.message);
   }
 };

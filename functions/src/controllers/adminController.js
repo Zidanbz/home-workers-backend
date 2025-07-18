@@ -214,28 +214,51 @@ const getAllOrders = async (req, res) => {
 
 const getAllWorkers = async (req, res) => {
   try {
-    const snapshot = await db.collection('workers').get();
-    const workers = [];
+    const { status } = req.query; // optional filter
 
-    for (const doc of snapshot.docs) {
-      const workerData = doc.data();
-      const userSnap = await db.collection('users').doc(doc.id).get();
-      const userData = userSnap.exists ? userSnap.data() : {};
-
-      workers.push({
-        id: doc.id,
-        nama: userData.nama,
-        email: userData.email,
-        status: workerData.status,
-        deskripsi: workerData.deskripsi,
-        ktpUrl: workerData.ktpUrl,
-        fotoDiriUrl: workerData.fotoDiriUrl,
-      });
+    let workersQuery = db.collection('workers');
+    if (status) {
+      workersQuery = workersQuery.where('status', '==', status);
     }
 
-    return sendSuccess(res, 200, 'Workers fetched successfully', workers);
+    const snapshot = await workersQuery.get();
+    if (snapshot.empty) {
+      return sendSuccess(res, 200, 'No workers found', []);
+    }
+
+    // Ambil semua user doc paralel berdasarkan ID dokumen workers
+    const workerDocs = snapshot.docs;
+    const userFetches = workerDocs.map((doc) =>
+      db.collection('users').doc(doc.id).get()
+    );
+
+    const userSnaps = await Promise.all(userFetches);
+
+    const workers = workerDocs.map((doc, i) => {
+      const workerData = doc.data() || {};
+      const userSnap = userSnaps[i];
+      const userData = userSnap.exists ? userSnap.data() : {};
+
+      return {
+        id: doc.id,
+        nama: userData.nama ?? workerData.nama ?? '',
+        email: userData.email ?? '',
+        contact: userData.contact ?? null,
+        role: userData.role ?? 'WORKER',
+        status: workerData.status ?? 'pending',
+        deskripsi: workerData.deskripsi ?? '',
+        ktpUrl: workerData.ktpUrl ?? null,
+        fotoDiriUrl: workerData.fotoDiriUrl ?? null,
+        linkPortofolio: workerData.linkPortofolio ?? null,
+        jumlahOrderSelesai: workerData.jumlahOrderSelesai ?? 0,
+        rating: workerData.rating ?? 0,
+      };
+    });
+
+    return sendSuccess(res, 200, 'Workers fetched successfully.', workers);
   } catch (error) {
-    return sendError(res, 500, 'Failed to fetch workers', error.message);
+    console.error('[getAllWorkers] error:', error);
+    return sendError(res, 500, 'Failed to fetch workers.', error.message);
   }
 };
 

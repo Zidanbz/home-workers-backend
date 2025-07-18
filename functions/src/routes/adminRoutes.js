@@ -9,7 +9,9 @@ const {
     sendBroadcast,
     getPendingWorkers,
     approveWorker,
-    rejectWorker
+    rejectWorker,
+    getAllWorkers,
+    getAllOrders
 } = require('../controllers/adminController');
 
 // Impor kedua middleware
@@ -39,6 +41,12 @@ router.put('/workers/:workerId/approve', approveWorker);
 
 // Rute untuk menolak worker
 router.put('/workers/:workerId/reject', rejectWorker);
+
+// Rute untuk mendapatkan daftar worker
+router.get('/workers', getAllWorkers);  
+
+// Rute untuk mendapatkan daftar order
+router.get('/orders', getAllOrders);
 
 
 
