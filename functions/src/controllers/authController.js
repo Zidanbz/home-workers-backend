@@ -295,6 +295,81 @@ const updateFcmToken = async (req, res) => {
   }
 };
 
+/**
+ * Forgot Password - Kirim email reset password
+ */
+const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return sendError(res, 400, "Email wajib diisi.");
+  }
+
+  try {
+    // Endpoint Firebase untuk reset password
+    const firebaseResetUrl = `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${process.env.APP_FIREBASE_WEB_API_KEY}`;
+
+    // Kirim request ke Firebase untuk mengirim email reset password
+    await axios.post(firebaseResetUrl, {
+      requestType: "PASSWORD_RESET",
+      email,
+    });
+
+    return sendSuccess(res, 200, "Email reset password telah dikirim. Silakan cek kotak masuk Anda.");
+  } catch (error) {
+    console.error("FORGOT_PASSWORD_ERROR:", error.response?.data || error.message);
+
+    let message = "Gagal mengirim email reset password.";
+    if (error.response?.data?.error?.message === "EMAIL_NOT_FOUND") {
+      message = "Email tidak terdaftar.";
+    }
+
+    return sendError(res, 400, message);
+  }
+};
+
+/**
+ * Reset Password - Setel password baru menggunakan oobCode dari email
+ */
+const resetPassword = async (req, res) => {
+  const { oobCode, newPassword } = req.body;
+
+  if (!oobCode || !newPassword) {
+    return sendError(res, 400, "oobCode dan newPassword wajib diisi.");
+  }
+
+  try {
+    const firebaseResetUrl = `https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=${process.env.APP_FIREBASE_WEB_API_KEY}`;
+
+    const response = await axios.post(firebaseResetUrl, {
+      oobCode,
+      newPassword,
+    });
+
+    return sendSuccess(res, 200, "Password berhasil direset.", response.data);
+  } catch (error) {
+    console.error("RESET_PASSWORD_ERROR:", error.response?.data || error.message);
+
+    let message = "Gagal mereset password.";
+    const firebaseError = error.response?.data?.error?.message;
+
+    if (firebaseError) {
+      switch (firebaseError) {
+        case "INVALID_OOB_CODE":
+          message = "Kode reset password tidak valid atau sudah kadaluarsa.";
+          break;
+        case "WEAK_PASSWORD":
+          message = "Password terlalu lemah. Gunakan minimal 6 karakter.";
+          break;
+        default:
+          message = "Terjadi kesalahan saat mereset password.";
+          break;
+      }
+    }
+
+    return sendError(res, 400, message);
+  }
+};
 
 module.exports = {
   registerCustomer,
@@ -302,4 +377,6 @@ module.exports = {
   loginUser,
   getMyProfile,
   updateFcmToken,
+  forgotPassword,
+  resetPassword,
 };

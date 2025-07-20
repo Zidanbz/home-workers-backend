@@ -28,6 +28,48 @@ const getPendingServices = async (req, res) => {
 };
 
 /**
+ * GET /api/admin/services
+ * Admin mengambil daftar semua layanan.
+ */
+const getAllServices = async (req, res) => {
+  try {
+    const servicesQuery = db.collection('service');
+    const snapshot = await servicesQuery.get();
+
+    if (snapshot.empty) {
+      return sendSuccess(res, 200, 'No services found', []);
+    }
+
+    const services = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return sendSuccess(res, 200, 'All services retrieved successfully', services);
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get all services', error.message);
+  }
+};
+
+/**
+ * GET /api/admin/services/:serviceId
+ * Admin mengambil detail layanan berdasarkan ID layanan.
+ */
+const getServiceDetail = async (req, res) => {
+  try {
+    const { serviceId } = req.params;
+    const serviceRef = db.collection('service').doc(serviceId);
+    const serviceDoc = await serviceRef.get();
+
+    if (!serviceDoc.exists) {
+      return sendError(res, 404, 'Service not found');
+    }
+
+    const serviceData = serviceDoc.data();
+    return sendSuccess(res, 200, 'Service detail retrieved successfully', { id: serviceDoc.id, ...serviceData });
+  } catch (error) {
+    return sendError(res, 500, 'Failed to get service detail', error.message);
+  }
+};
+
+
+/**
  * PUT /api/admin/services/:serviceId/approve
  * Admin menyetujui sebuah layanan.
  */
@@ -48,39 +90,39 @@ const approveService = async (req, res) => {
 
     const workerUserDoc = await db.collection('users').doc(workerId).get();
     if (workerUserDoc.exists) {
-        const fcmToken = workerUserDoc.data().fcmToken;
-        const notificationPayload = {
-            notification: {
-                title: 'Layanan Disetujui! ✅',
-                body: `Layanan Anda "${serviceData.namaLayanan}" telah disetujui.`,
-            },
-            token: fcmToken,
-            data: { serviceId: serviceId, screen: 'my_jobs' }
-        };
+      const fcmToken = workerUserDoc.data().fcmToken;
+      const notificationPayload = {
+        notification: {
+          title: 'Layanan Disetujui! ✅',
+          body: `Layanan Anda "${serviceData.namaLayanan}" telah disetujui.`,
+        },
+        token: fcmToken,
+        data: { serviceId: serviceId, screen: 'my_jobs' }
+      };
 
-        // --- LOGIKA BARU DIMULAI DI SINI ---
+      // --- LOGIKA BARU DIMULAI DI SINI ---
 
-        // Simpan notifikasi ke sub-koleksi 'notifications' milik worker
-        const notificationRef = db.collection('users').doc(workerId).collection('notifications').doc();
-        await notificationRef.set({
-            title: notificationPayload.notification.title,
-            body: notificationPayload.notification.body,
-            timestamp: new Date(),
-            isRead: false,
-            type: 'service_approved',
-            relatedId: serviceId,
-        });
+      // Simpan notifikasi ke sub-koleksi 'notifications' milik worker
+      const notificationRef = db.collection('users').doc(workerId).collection('notifications').doc();
+      await notificationRef.set({
+        title: notificationPayload.notification.title,
+        body: notificationPayload.notification.body,
+        timestamp: new Date(),
+        isRead: false,
+        type: 'service_approved',
+        relatedId: serviceId,
+      });
 
-        // Kirim notifikasi push jika token ada
-        if (fcmToken) {
-            await admin.messaging().send(notificationPayload);
-        }
+      // Kirim notifikasi push jika token ada
+      if (fcmToken) {
+        await admin.messaging().send(notificationPayload);
+      }
     }
-    
+
     res.status(200).json({ message: 'Service approved successfully.' });
-} catch (error) {
+  } catch (error) {
     res.status(500).json({ message: 'Failed to approve service', error: error.message });
-}
+  }
 };
 
 /**
@@ -308,6 +350,7 @@ const sendBroadcast = async (req, res) => {
       tokenSent: fcmTokens.length,
       successCount: totalSuccess,
       failureCount: totalFailure,
+      imageUrl: finalImageUrl || null,
     });
 
     return sendSuccess(res, 200, 'Broadcast sent successfully.', {
@@ -487,10 +530,10 @@ const rejectWorker = async (req, res) => {
 };
 
 
-
-
 module.exports = {
   getPendingServices,
+  getAllServices, // Added
+  getServiceDetail, // Added
   approveService,
   rejectService,
   sendBroadcast,

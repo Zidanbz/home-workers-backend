@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 // const multer = require('multer');
-const { registerCustomer, registerWorker, loginUser, getMyProfile, updateFcmToken } = require('../controllers/authController');
+const { registerCustomer, registerWorker, loginUser, getMyProfile, updateFcmToken, forgotPassword, resetPassword } = require('../controllers/authController');
 const { tryCatch } = require('../utils/responseHelper');
 const parseFormData = require('../middlewares/busboyupload');
 const { authMiddleware } = require('../middlewares/authMiddleware');
@@ -21,7 +21,15 @@ router.post('/register/customer', registerCustomer);
 // Endpoint untuk registrasi sebagai Worker
 router.post('/register/worker', parseFormData, tryCatch(registerWorker));
 // Endpoint untuk mendapatkan data user yang sedang login
-router.get('/me', getMyProfile);    
+router.get('/me', getMyProfile);
+
+// Endpoint untuk memperbarui token FCM
 router.post('/user/update-fcm-token', authMiddleware, tryCatch(updateFcmToken));
+
+// Endpoint untuk lupa password
+router.post('/forgot-password', forgotPassword);
+
+// Endpoint untuk mereset password
+router.post('/reset-password', resetPassword);
 
 module.exports = router;

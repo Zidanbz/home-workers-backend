@@ -4,6 +4,8 @@ const express = require('express');
 const router = express.Router();
 const {
     getPendingServices,
+    getAllServices, // Added
+    getServiceDetail, // Added
     approveService,
     rejectService,
     sendBroadcast,
@@ -25,6 +27,12 @@ router.use(authMiddleware, adminMiddleware);
 // Rute untuk mendapatkan layanan pending
 router.get('/services/pending', getPendingServices);
 
+// Rute untuk mendapatkan semua layanan (Added)
+router.get('/services', getAllServices);
+
+// Rute untuk mendapatkan detail layanan berdasarkan ID (Added)
+router.get('/services/:serviceId', getServiceDetail);
+
 // Rute untuk menyetujui layanan
 router.put('/services/:serviceId/approve', approveService);
 
@@ -44,11 +52,10 @@ router.put('/workers/:workerId/approve', approveWorker);
 router.put('/workers/:workerId/reject', rejectWorker);
 
 // Rute untuk mendapatkan daftar worker
-router.get('/workers', getAllWorkers);  
+router.get('/workers', getAllWorkers);
 
 // Rute untuk mendapatkan daftar order
 router.get('/orders', getAllOrders);
-
 
 
 module.exports = router;
