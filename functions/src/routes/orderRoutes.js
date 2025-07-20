@@ -22,7 +22,7 @@ const { authMiddleware } = require('../middlewares/authMiddleware');
 router.use(authMiddleware);
 
 // Customer membuat pesanan baru
-router.post('/', createOrder);
+// router.post('/', createOrder);
 
 // Pengguna mengambil daftar pesanannya
 router.get('/my-orders', getMyOrders);

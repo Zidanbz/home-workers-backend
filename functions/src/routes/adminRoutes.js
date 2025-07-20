@@ -16,6 +16,7 @@ const {
 
 // Impor kedua middleware
 const { authMiddleware, adminMiddleware } = require('../middlewares/authMiddleware');
+const parseFormData = require('../middlewares/busboyupload');
 
 // Gunakan kedua middleware ini untuk SEMUA rute di dalam file ini
 // authMiddleware akan dijalankan dulu, baru adminMiddleware
@@ -31,7 +32,7 @@ router.put('/services/:serviceId/approve', approveService);
 router.put('/services/:serviceId/reject', rejectService);
 
 // Endpoint untuk admin mengirim pesan broadcast
-router.post('/broadcast', sendBroadcast);
+router.post('/broadcast', parseFormData, sendBroadcast);
 
 // Rute untuk mendapatkan daftar worker
 router.get('/workers/pending', getPendingWorkers);

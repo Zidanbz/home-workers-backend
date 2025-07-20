@@ -2,8 +2,11 @@
 
 const admin = require('firebase-admin');
 const db = admin.firestore();
-const { sendSuccess, sendError } = require('../utils/responseHelper');
 
+const { sendSuccess, sendError } = require('../utils/responseHelper');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const bucket = admin.storage().bucket();
 /**
  * GET /api/admin/services/pending
  * Admin mengambil daftar semua layanan yang menunggu persetujuan.
@@ -129,56 +132,191 @@ const rejectService = async (req, res) => {
  * POST /api/admin/broadcast
  * Admin mengirim notifikasi broadcast ke target pengguna.
  */
+async function uploadBroadcastImage(file, uidLabel = 'admin') {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  const safeExt = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? ext : '.jpg';
+  const filePath = `broadcast/${uidLabel}/${Date.now()}_${uuidv4()}${safeExt}`;
+
+  const storageFile = bucket.file(filePath);
+  const stream = storageFile.createWriteStream({
+    metadata: { contentType: file.mimetype || 'image/jpeg' },
+  });
+
+  await new Promise((resolve, reject) => {
+    stream.on('error', reject);
+    stream.on('finish', resolve);
+    stream.end(file.buffer);
+  });
+
+  // Buat publik agar FCM bisa load image
+  await storageFile.makePublic();
+  return storageFile.publicUrl();
+}
+
+/**
+ * Chunk array tokens (FCM max 500 per multicast call).
+ */
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+/**
+ * Kirim broadcast push notification ke target user.
+ * Dukung upload file image (multipart) seperti registerWorker.
+ */
 const sendBroadcast = async (req, res) => {
-  const { title, body, imageUrl, target, userIds } = req.body;
+  const { title, body, target, imageUrl: imageUrlField, userIds } = req.body;
 
   if (!title || !body || !target) {
     return sendError(res, 400, 'Title, body, and target are required.');
   }
 
-  try {
-    let usersQuery = db.collection('users');
+  // Ambil file image (busboyupload style: req.files.image atau array)
+  let imageFile = null;
+  if (req.files?.image) {
+    // Bisa berupa single object atau array
+    imageFile = Array.isArray(req.files.image) ? req.files.image[0] : req.files.image;
+  }
 
-    if (target === 'customers') {
-      usersQuery = usersQuery.where('role', '==', 'CUSTOMER');
-    } else if (target === 'workers') {
-      usersQuery = usersQuery.where('role', '==', 'WORKER');
-    } else if (target !== 'all') {
-      return sendError(res, 400, "Invalid target. Use 'all', 'customers', or 'workers'.");
+  let finalImageUrl;
+  try {
+    // ------------------------------------------------------------------
+    // 1. Jika ada file image → upload ke Storage (public)
+    // ------------------------------------------------------------------
+    if (imageFile) {
+      finalImageUrl = await uploadBroadcastImage(imageFile, 'adminBroadcast');
+    } else if (imageUrlField && typeof imageUrlField === 'string' && imageUrlField.trim() !== '') {
+      // fallback ke imageUrl yang dikirim manual
+      finalImageUrl = imageUrlField.trim();
     }
 
-    const usersSnapshot = await usersQuery.get();
-    const fcmTokens = [];
+    // ------------------------------------------------------------------
+    // 2. Ambil daftar user (dari userIds atau target role)
+    // ------------------------------------------------------------------
+    let fcmTokens = [];
+    let userCount = 0;
 
-    usersSnapshot.forEach(doc => {
-      const userData = doc.data();
-      if (userData.fcmToken) {
-        fcmTokens.push(userData.fcmToken);
+    if (userIds) {
+      // jika userIds dikirim (string JSON), override target
+      let arr = [];
+      try {
+        arr = Array.isArray(userIds) ? userIds : JSON.parse(userIds);
+      } catch (_) { arr = []; }
+      const uniqueIds = [...new Set(arr.filter(Boolean))];
+
+      if (uniqueIds.length) {
+        const batchGet = await Promise.all(
+          uniqueIds.map(id => db.collection('users').doc(id).get())
+        );
+        batchGet.forEach(docSnap => {
+          if (docSnap.exists) {
+            const d = docSnap.data();
+            userCount++;
+            if (d?.fcmToken) fcmTokens.push(d.fcmToken);
+          }
+        });
       }
-    });
+    } else {
+      // query by target: customers / workers / all
+      let usersQuery = db.collection('users');
+      if (target === 'customers') {
+        usersQuery = usersQuery.where('role', '==', 'CUSTOMER');
+      } else if (target === 'workers') {
+        usersQuery = usersQuery.where('role', '==', 'WORKER');
+      } else if (target !== 'all') {
+        return sendError(res, 400, "Invalid target. Use 'all', 'customers', or 'workers'.");
+      }
+
+      const snapshot = await usersQuery.get();
+      userCount = snapshot.size;
+      snapshot.forEach(doc => {
+        const d = doc.data();
+        if (d?.fcmToken && typeof d.fcmToken === 'string' && d.fcmToken.trim() !== '') {
+          fcmTokens.push(d.fcmToken.trim());
+        }
+      });
+    }
+
+    // Dedup token (beberapa user mungkin share device)
+    fcmTokens = [...new Set(fcmTokens)];
 
     if (fcmTokens.length === 0) {
-      return sendSuccess(res, 200, 'Broadcast processed, but no users with FCM tokens found for the target.');
+      return sendSuccess(
+        res,
+        200,
+        'Broadcast processed, but no users with FCM tokens found for the target.',
+        { target, userCount, imageUrl: finalImageUrl || null }
+      );
     }
 
-    const payload = {
-      notification: {
-        title: title,
-        body: body,
-      },
+    // ------------------------------------------------------------------
+    // 3. Siapkan message FCM
+    // ------------------------------------------------------------------
+    const baseNotif = {
+      title,
+      body,
+      ...(finalImageUrl ? { image: finalImageUrl } : {})
     };
 
-    if (imageUrl) {
-      payload.notification.image = imageUrl;
+    // Data tambahan (opsional untuk deep link)
+    // const dataPayload = { deeplink: 'home_workers://promo', type: 'broadcast' };
+
+    // ------------------------------------------------------------------
+    // 4. Kirim dalam batch (chunk 500 token)
+    // ------------------------------------------------------------------
+    const tokenChunks = chunkArray(fcmTokens, 500);
+    let totalSuccess = 0;
+    let totalFailure = 0;
+
+    for (const tkChunk of tokenChunks) {
+      const message = {
+        tokens: tkChunk,
+        notification: baseNotif,
+        // data: dataPayload, // aktifkan jika diperlukan
+      };
+
+      const resp = await admin.messaging().sendEachForMulticast(message);
+      totalSuccess += resp.successCount;
+      totalFailure += resp.failureCount;
+
+      if (resp.responses?.length) {
+        resp.responses.forEach((r, idx) => {
+          if (!r.success) {
+            console.warn(
+              `Broadcast FCM error token[${idx}]:`,
+              r.error?.code,
+              r.error?.message
+            );
+          }
+        });
+      }
     }
 
-    const response = await admin.messaging().sendToDevice(fcmTokens, payload);
-
-    console.log(`Broadcast sent. Success count: ${response.successCount}, Failure count: ${response.failureCount}`);
+    // ------------------------------------------------------------------
+    // 5. (Opsional) simpan log broadcast ke Firestore
+    // ------------------------------------------------------------------
+    await db.collection('notification').add({
+      title,
+      body,
+      imageUrl: finalImageUrl || null,
+      target,
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      tokenSent: fcmTokens.length,
+      successCount: totalSuccess,
+      failureCount: totalFailure,
+    });
 
     return sendSuccess(res, 200, 'Broadcast sent successfully.', {
-      successCount: response.successCount,
-      failureCount: response.failureCount,
+      target,
+      userCount,
+      tokenSent: fcmTokens.length,
+      successCount: totalSuccess,
+      failureCount: totalFailure,
+      imageUrl: finalImageUrl || null,
     });
   } catch (error) {
     console.error('Error sending broadcast:', error);

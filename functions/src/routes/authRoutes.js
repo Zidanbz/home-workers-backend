@@ -3,9 +3,10 @@
 const express = require('express');
 const router = express.Router();
 // const multer = require('multer');
-const { registerCustomer, registerWorker, loginUser, getMyProfile } = require('../controllers/authController');
+const { registerCustomer, registerWorker, loginUser, getMyProfile, updateFcmToken } = require('../controllers/authController');
 const { tryCatch } = require('../utils/responseHelper');
 const parseFormData = require('../middlewares/busboyupload');
+const { authMiddleware } = require('../middlewares/authMiddleware');
 
 
 // const authMiddleware = require('../middlewares/authMiddleware');
@@ -21,5 +22,6 @@ router.post('/register/customer', registerCustomer);
 router.post('/register/worker', parseFormData, tryCatch(registerWorker));
 // Endpoint untuk mendapatkan data user yang sedang login
 router.get('/me', getMyProfile);    
+router.post('/user/update-fcm-token', authMiddleware, tryCatch(updateFcmToken));
 
 module.exports = router;

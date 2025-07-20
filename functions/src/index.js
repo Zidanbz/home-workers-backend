@@ -42,6 +42,7 @@ app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 // app.use('/api/payments', require('./routes/notificationRoutes'));
 app.use('/api/midtrans', require('./routes/midtransRoutes'));
+app.use('/api/vouchers', require('./routes/vouchersRoutes'));
 
 // Test Route
 app.get('/api', (req, res) => {

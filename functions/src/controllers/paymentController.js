@@ -2,16 +2,18 @@ const admin = require('firebase-admin');
 const db = admin.firestore();
 const snap = require('../config/midtrans');
 const { sendSuccess, sendError } = require('../utils/responseHelper');
+const { validateVoucherCode } = require('./vouchersController');
+// const { validateVoucherCode } = require('./voucherController');
 
 const DEFAULT_BIAYA_SURVEI = 15000;
 
 /**
- * POST /api/orders/with-payment
- * Buat order & langsung inisiasi transaksi Midtrans
+ * POST /api/payments/with-order
+ * Buat order & langsung inisiasi transaksi Midtrans (dengan voucher opsional)
  */
 const createOrderWithPayment = async (req, res) => {
   const { uid, email, nama } = req.user;
-  const { serviceId, jadwalPerbaikan, catatan } = req.body;
+  const { serviceId, jadwalPerbaikan, catatan, voucherCode } = req.body;
 
   if (!serviceId || !jadwalPerbaikan) {
     return sendError(res, 400, 'Service ID dan jadwal perbaikan wajib diisi.');
@@ -29,6 +31,7 @@ const createOrderWithPayment = async (req, res) => {
       return sendError(res, 403, 'Layanan belum disetujui admin.');
     }
 
+    // Hitung total harga awal
     let totalHarga = 0;
     if (tipeLayanan === 'fixed') {
       if (!harga || harga <= 0) return sendError(res, 400, 'Harga layanan tidak valid.');
@@ -37,6 +40,25 @@ const createOrderWithPayment = async (req, res) => {
       totalHarga = DEFAULT_BIAYA_SURVEI;
     } else {
       return sendError(res, 400, 'Tipe layanan tidak dikenali.');
+    }
+
+    // ==============================
+    // 🔹 Validasi Voucher (jika ada)
+    // ==============================
+    let discount = 0;
+    let appliedVoucher = null;
+    if (voucherCode) {
+      try {
+        const { discount: d, voucherCode: code, voucherRef } = await validateVoucherCode(voucherCode, uid, totalHarga);
+        discount = d;
+        appliedVoucher = code;
+        totalHarga = Math.max(0, totalHarga - discount);
+
+        // Increment penggunaan voucher
+        await voucherRef.update({ usedCount: admin.firestore.FieldValue.increment(1) });
+      } catch (err) {
+        return sendError(res, 400, err.message);
+      }
     }
 
     // ✅ Cek bentrok jadwal
@@ -55,7 +77,10 @@ const createOrderWithPayment = async (req, res) => {
       customerId: uid,
       workerId,
       serviceId,
-      harga: totalHarga,
+      harga: harga,
+      discount,
+      finalHarga: totalHarga,
+      appliedVoucher: appliedVoucher || null,
       tipeLayanan,
       paymentStatus: 'unpaid',
       workerAccess: false,
@@ -85,15 +110,19 @@ const createOrderWithPayment = async (req, res) => {
     return sendSuccess(res, 201, 'Order dibuat & pembayaran dimulai', {
       orderId,
       snapToken: transaction.token,
+      appliedVoucher,
+      discount,
+      totalHarga,
     });
   } catch (error) {
     console.error("❌ Error createOrderWithPayment:", error);
     return sendError(res, 500, 'Gagal membuat order: ' + error.message);
   }
 };
+
+/** GET /api/payments/status/:orderId */
 const getMidtransStatus = async (req, res) => {
   const { orderId } = req.params;
-
   try {
     const status = await snap.transaction.status(orderId);
     return sendSuccess(res, 200, 'Status transaksi berhasil diambil', status);
@@ -103,49 +132,26 @@ const getMidtransStatus = async (req, res) => {
   }
 };
 
-/**
- * POST /api/payments/start/:orderId
- * Inisiasi pembayaran untuk order dengan status quote_accepted
- */
+/** POST /api/payments/start/:orderId */
 const startPaymentForQuote = async (req, res) => {
   const { uid, email, nama } = req.user;
   const { orderId } = req.params;
-
   try {
-    // Ambil order dari Firestore
     const orderRef = db.collection('orders').doc(orderId);
     const orderDoc = await orderRef.get();
-
-    if (!orderDoc.exists) {
-      return sendError(res, 404, 'Order tidak ditemukan.');
-    }
+    if (!orderDoc.exists) return sendError(res, 404, 'Order tidak ditemukan.');
 
     const orderData = orderDoc.data();
-
-    // Validasi customer
-    if (orderData.customerId !== uid) {
-      return sendError(res, 403, 'Anda tidak berhak melakukan pembayaran untuk order ini.');
-    }
-
-    // Validasi status
+    if (orderData.customerId !== uid) return sendError(res, 403, 'Anda tidak berhak melakukan pembayaran untuk order ini.');
     if (orderData.status !== 'quote_accepted') {
       return sendError(res, 409, `Order harus berstatus quote_accepted, sekarang: ${orderData.status}.`);
     }
+    if (!orderData.finalPrice || orderData.finalPrice <= 0) return sendError(res, 400, 'Harga final belum ditentukan.');
+    if (orderData.paymentStatus === 'paid') return sendSuccess(res, 200, 'Order ini sudah dibayar.');
 
-    // Validasi finalPrice
-    if (!orderData.finalPrice || orderData.finalPrice <= 0) {
-      return sendError(res, 400, 'Harga final belum ditentukan.');
-    }
-
-    // Jika sudah dibayar, jangan buat transaksi baru
-    if (orderData.paymentStatus === 'paid') {
-      return sendSuccess(res, 200, 'Order ini sudah dibayar.');
-    }
-
-    // Buat transaksi Midtrans
     const parameter = {
       transaction_details: {
-        order_id: `quote_${orderId}`, // Tambahkan prefix agar unik
+        order_id: `quote_${orderId}`,
         gross_amount: orderData.finalPrice,
       },
       customer_details: {
@@ -155,11 +161,9 @@ const startPaymentForQuote = async (req, res) => {
     };
 
     const transaction = await snap.createTransaction(parameter);
-    const transactionToken = transaction.token;
-
     return sendSuccess(res, 200, 'Token pembayaran berhasil dibuat.', {
       orderId,
-      snapToken: transactionToken,
+      snapToken: transaction.token,
       amount: orderData.finalPrice,
     });
   } catch (error) {
@@ -167,7 +171,6 @@ const startPaymentForQuote = async (req, res) => {
     return sendError(res, 500, 'Gagal memulai pembayaran: ' + error.message);
   }
 };
-
 
 module.exports = {
   createOrderWithPayment,

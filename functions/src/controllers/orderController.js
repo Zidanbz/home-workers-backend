@@ -2,48 +2,7 @@ const admin = require('firebase-admin');
 const db = admin.firestore();
 const { sendSuccess, sendError } = require('../utils/responseHelper');
 
-// POST /api/orders
-// Customer membuat pesanan baru
-const createOrder = async (req, res) => {
-    const { uid: customerId } = req.user;
-    const { serviceId, jadwalPerbaikan, catatan } = req.body;
 
-    if (!serviceId || !jadwalPerbaikan) {
-        return sendError(res, 400, 'Service ID and schedule date are required.');
-    }
-
-    try {
-        const serviceRef = db.collection('service').doc(serviceId);
-        const serviceDoc = await serviceRef.get();
-
-        if (!serviceDoc.exists) {
-            return sendError(res, 404, 'Service not found.');
-        }
-
-        const serviceData = serviceDoc.data();
-        if (serviceData.statusPersetujuan !== 'approved') {
-            return sendError(res, 403, 'This service is not available for booking.');
-        }
-
-        const { workerId, harga } = serviceData;
-
-        const newOrder = await db.collection('orders').add({
-            customerId,
-            workerId,
-            serviceId,
-            harga,
-            status: 'pending',
-            jadwalPerbaikan: new Date(jadwalPerbaikan),
-            catatan: catatan || '',
-            dibuatPada: new Date(),
-            hasBeenReviewed: false,
-        });
-
-        return sendSuccess(res, 201, 'Order created successfully', { orderId: newOrder.id });
-    } catch (error) {
-        return sendError(res, 500, 'Failed to create order: ' + error.message);
-    }
-};
 
 const getMyOrders = async (req, res) => {
   const { uid } = req.user;
@@ -553,7 +512,6 @@ const updateOrderStatus = async (req, res) => {
 };
 
 module.exports = {
-    createOrder,
     getMyOrders,
     acceptOrder,
     completeOrder,
