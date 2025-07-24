@@ -2,34 +2,61 @@
 
 const express = require('express');
 const router = express.Router();
-// const multer = require('multer');
-const { registerCustomer, registerWorker, loginUser, getMyProfile, updateFcmToken, forgotPassword, resetPassword } = require('../controllers/authController');
-const { tryCatch } = require('../utils/responseHelper');
+
 const parseFormData = require('../middlewares/busboyupload');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { tryCatch } = require('../utils/responseHelper');
 
+const {
+  registerCustomer,
+  registerWorker,
+  loginUser,
+  resendVerificationEmail,
+  getMyProfile,
+  updateFcmToken,
+  forgotPassword,
+  resetPassword,
+  checkEmailVerification,
+  verifyEmail,
+} = require('../controllers/authController');
 
-// const authMiddleware = require('../middlewares/authMiddleware');
+// -----------------------------------------------------------------------------
+// AUTH ROUTES
+// Base path assumed: /api/auth  (adjust in app.js when mounting)
+// -----------------------------------------------------------------------------
 
-// const storage = multer.memoryStorage();
-// const upload = multer({ storage: storage });
+// Login (returns customToken + idToken + requireEmailVerification flag)
+router.post('/login', tryCatch(loginUser));
 
-router.post('/login', loginUser);
-// Endpoint untuk registrasi sebagai Customer
-router.post('/register/customer', registerCustomer);
+// Register Customer
+router.post('/register/customer', tryCatch(registerCustomer));
 
-// Endpoint untuk registrasi sebagai Worker
+// Register Worker (multipart: ktp, fotoDiri)
 router.post('/register/worker', parseFormData, tryCatch(registerWorker));
-// Endpoint untuk mendapatkan data user yang sedang login
-router.get('/me', getMyProfile);
 
-// Endpoint untuk memperbarui token FCM
+// Resend verification email (auth optional; controller can use req.user OR body.email)
+router.post('/resend-verification', tryCatch(resendVerificationEmail));
+
+// Get profile of logged-in user (requires auth)
+router.get('/me', authMiddleware, tryCatch(getMyProfile));
+
+// Update FCM token (requires auth)
+// New canonical path:
+router.post('/update-fcm-token', authMiddleware, tryCatch(updateFcmToken));
+// Legacy path retained for backward compatibility:
 router.post('/user/update-fcm-token', authMiddleware, tryCatch(updateFcmToken));
 
-// Endpoint untuk lupa password
-router.post('/forgot-password', forgotPassword);
+// Forgot password (send reset email)
+router.post('/forgot-password', tryCatch(forgotPassword));
 
-// Endpoint untuk mereset password
-router.post('/reset-password', resetPassword);
+// Reset password (handle OOB code)
+router.post('/reset-password', tryCatch(resetPassword));
+
+// Check email verification
+router.post('/check-email-verification', tryCatch(checkEmailVerification));
+
+// Verify email
+router.get('/verify-email', verifyEmail);
+
 
 module.exports = router;

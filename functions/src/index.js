@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
-require('dotenv').config();
 const morgan = require('morgan');
 
 // Konfigurasi Firebase
@@ -55,6 +54,7 @@ app.use((err, req, res, next) => {
   console.error('🔥 GLOBAL ERROR HANDLER:', err);
   sendError(res, 500, 'Unhandled server error', err.message || err);
 });
+
 // // Export aplikasi Express sebagai Firebase Function dengan region yang benar
 // exports.api = functions.runWith({ region: 'asia-southeast2' }).https.onRequest(app);
 // Export sebagai Firebase Function (Cloud Run)
